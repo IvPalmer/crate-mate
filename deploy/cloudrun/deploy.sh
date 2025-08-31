@@ -51,12 +51,12 @@ gcloud run deploy "${SERVICE}" \
   --region "${REGION}" \
   --platform managed \
   --allow-unauthenticated \
-  --port 8000
+  --port 8000 \
+  --memory 1Gi \
+  --cpu 1 \
+  --set-env-vars DISCOGS_TOKEN="${DISCOGS_TOKEN}",SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}",SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}",GEMINI_API_KEY="${GEMINI_API_KEY}",YOUTUBE_API_KEY="${YOUTUBE_API_KEY}",ALLOWED_ORIGINS="${ALLOWED_ORIGINS}"
 
-echo "Applying environment variables..."
-gcloud run services update "${SERVICE}" \
-  --region "${REGION}" \
-  --update-env-vars DISCOGS_TOKEN="${DISCOGS_TOKEN}",SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}",SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}",GEMINI_API_KEY="${GEMINI_API_KEY}",YOUTUBE_API_KEY="${YOUTUBE_API_KEY}",ALLOWED_ORIGINS="${ALLOWED_ORIGINS}"
+echo "Environment variables applied during deploy."
 
 URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')
 echo "\nDeployed: ${URL}"
