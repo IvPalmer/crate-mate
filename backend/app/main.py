@@ -7,6 +7,8 @@ Each route has /api as a prefix, so the full path to the route is /api/{route}.
 import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, APIRouter
+from fastapi.middleware.cors import CORSMiddleware
+import os
 from fastapi.responses import JSONResponse
 from PIL import Image
 
@@ -25,6 +27,17 @@ simple_searcher = SimpleUniversalSearch()
 hybrid_searcher = HybridSearch()
 
 app = FastAPI()
+
+# CORS (allow Streamlit or other frontends)
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*")
+origins = [o.strip() for o in allowed_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 router = APIRouter()
 
 
