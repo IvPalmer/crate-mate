@@ -22,64 +22,33 @@ Architecture and sequence diagrams available in `diagrams/png`.
 
 ## Getting Started
 
-### Prerequisites
+### 1) Prerequisites
+- Docker and Docker Compose
+- Python 3.9+ (for local dev) and Node 20 (optional)
 
-Ensure you install the following locally first:
+### 2) Environment variables
+Copy `.env.example` to `.env` and fill in the values you have:
 
-#### For Deployment
+- `DISCOGS_TOKEN` (required)
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` (optional)
+- `GEMINI_API_KEY` (optional but recommended)
+- `GOOGLE_APPLICATION_CREDENTIALS` (optional)
+  - IMPORTANT: keep your JSON service account key OUTSIDE this repo. Put it under a secure path (e.g., `~/keys/crate-mate-gcp.json`) and point the var to that absolute path. The repo’s `.gitignore` already excludes common secret locations.
+- `YOUTUBE_API_KEY` (optional; scraping fallback is used if absent)
 
-- [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/)
+### 3) Run with Docker
+```bash
+docker compose up -d --build
+```
+Open `http://localhost`.
 
-#### For Development
+### 4) Local dev (optional)
+- Backend: FastAPI under `backend/`
+- Frontend: React under `frontend/`
 
-- [Node.js and npm](https://nodejs.org/en)
-- Python 3.10+
-
-### Installation
-
-1. Clone this repository:
-
-   ```bash
-   git clone https://github.com/IvPalmer/crate-mate.git
-   cd crate-mate
-   ```
-
-2. Run the automated setup:
-
-    ```bash
-    ./setup_crate_mate.sh
-    ```
-
-    The script will guide you through setup and prompt for API keys:
-
-    - **Discogs Token** - [Get one here](https://www.discogs.com/settings/developers)
-    - **Spotify Credentials** - [Create app here](https://developer.spotify.com/dashboard)
-    - **YouTube API Key** 🆕 - [Get key here](https://console.cloud.google.com/apis/credentials) (Enable YouTube Data API v3)
-
-3. Build and start the app:
-
-    ```bash
-    docker compose up -d --build
-    ```
-
-    Note: if you omit `-d`, the app will still launch and logs will be output to your terminal. Upon pressing `CTRL-C`, the app will stop. The `-d` flag is used to run the app in the background.
-
-    Omit `--build` if there are no container changes needing to be made (e.g. you only changed `backend` or `frontend` code).
-
-4. Access the services:
-   - Frontend: <http://localhost/>
-   - Backend: <http://localhost/api/>
-   - pgAdmin: <http://localhost/pga/>
-     - User/pass: `admin@vinyl.com`/`admin`
-     - PostgreSQL: `postgres`/`postgres`
-
-5. Stop the app:
-
-    ```bash
-    docker compose down
-    ```
-
-    Note: run from the project's top level directory.
+## Security notes
+- Do not commit secrets. `.env` is ignored; use `.env.example` for documentation.
+- The GCP JSON key file must not live inside the repo. Rotate any keys that may have been committed in the past.
 
 ## Development
 
@@ -184,24 +153,3 @@ docker exec vinyl-nginx nginx -s reload
       - Testing instructions
 
 4. Run code formatters (e.g., black for Python, Prettier for JS) before committing.
-
-## TODO
-
-### Immediate
-
-- Add Records endpoint
-  - Interface for selecting just one DB
-  - Resolve differences in source metadata
-
-### Long-term
-
-- Caching
-- Deployment
-- Routine metadata updates
-- Detailed error messages
-  - Debugging view - present the debugging image stages
-- Batch detection? Instance segmentation.
-- Show artist images on library page.
-- On-the-fly (live) classification.
-- If no classification above a certain threshold is found, return the three closest, and present them to the user. The user chooses the ground truth and the model is updated via reinforcement learning.
-- Add to playlist/queue in streaming apps (Spotify)
