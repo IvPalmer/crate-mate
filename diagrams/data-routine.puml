@@ -1,4 +1,4 @@
-@startuml album-wiz Metadata Collection Routine
+@startuml Crate-Mate Metadata Collection Routine
 title Metadata Collection Routine
 
 actor "System Admin" as Admin

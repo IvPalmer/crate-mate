@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   frontend:
     build:
@@ -27,58 +29,18 @@ services:
       context: ./backend
     container_name: vinyl-backend
     volumes:
-      - ./backend:/app
-      - ./database/sample_data/images:/media
-      - ./database/sample_data/import-albums.csv:/app/import-albums.csv
-      - ./database/sample_data/import-songs.csv:/app/import-songs.csv
-      - ./debugging_imgs:/app/debugging_imgs
+      - ./backend:/usr/src/app
+      - ./neural-quarter-470623-r2-e3891a759a91.json:/app/gcp-credentials.json:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
+      - PYTHONUNBUFFERED=1
+      - DISCOGS_TOKEN=${DISCOGS_TOKEN}
       - DATABASE_URL
       - MEDIA_DIR
       - NUMBA_DEBUG=0
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
     env_file:
       - .env
-    depends_on:
-      database:
-        # Ensure the database container starts before the backend
-        condition: service_healthy
-    networks:
-      - vinyl-network
-
-  # If renaming this service, update DATABASE_URL in the .env file!
-  database:
-    image: postgres:15
-    container_name: vinyl-database
-    build:
-      context: ./database
-    healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "postgres" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - postgres_data:/var/lib/postgresql/data # Persistent storage for the database data (allows data to outlive container restarts/builds)
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql # Initialize the database with our custom SQL init script
-      - ./database/sample_data/images:/media
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: vinyl_db
-    env_file:
-      - .env
-    networks:
-      - vinyl-network
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin
-    env_file:
-      - .env
-    volumes:
-      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro # Pre-configured servers.json file
-    depends_on:
-      database:
-        condition: service_healthy
     networks:
       - vinyl-network
 
@@ -95,12 +57,11 @@ services:
     depends_on:
       - frontend
       - backend
-      - database
     networks:
       - vinyl-network
 
 volumes:
-  postgres_data: # Define a persistent volume for the PostgreSQL database (to outlive container restarts)
+  media_volume:
 
 networks:
   vinyl-network:

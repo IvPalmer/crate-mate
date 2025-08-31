@@ -177,14 +177,17 @@ class SpotifyCollector(MetadataCollector):
             tracks_data = await loop.run_in_executor(
                 self.executor, lambda: self.client.album_tracks(album_id)
             )
-            tracks = [
-                {
+            tracks = []
+            for track in tracks_data.get("items", []):
+                tracks.append({
                     "name": track.get("name"),
                     "duration": int(track.get("duration_ms", 0) / 1000),
                     "explicit": track.get("explicit", None),
-                }
-                for track in tracks_data.get("items", [])
-            ]
+                    # Prefer direct track link if available
+                    "url": (track.get("external_urls") or {}).get("spotify"),
+                    "id": track.get("id"),
+                    "uri": track.get("uri"),
+                })
             self.logger.info(
                 "Fetched %d tracks for album id: %s", len(tracks), album_id
             )

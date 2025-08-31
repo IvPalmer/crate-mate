@@ -1,4 +1,4 @@
-@startuml album-wiz High-Level Architecture Diagram
+@startuml Crate-Mate High-Level Architecture Diagram
 !define RECTANGLE #lightgrey
 
 RECTANGLE "user" as user

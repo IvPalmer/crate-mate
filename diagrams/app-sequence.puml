@@ -1,5 +1,5 @@
-@startuml album-wiz High-Level Sequence Diagram
-title album-wiz High-Level Sequence Diagram
+@startuml Crate-Mate High-Level Sequence Diagram
+title Crate-Mate High-Level Sequence Diagram
 actor DJ as User
 participant "Frontend" as App
 participant "Backend" as Backend

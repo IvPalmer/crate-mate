@@ -8,14 +8,12 @@ const ImageUploader = () => {
   const [uploadSuccess, setUploadSuccess] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [responseData, setResponseData] = useState(null);
-  const [showTracks, setShowTracks] = useState(false);
+  const [showTracks, setShowTracks] = useState(true); // Show tracks by default
   const [isDragging, setIsDragging] = useState(false);
-  const [isMobile, setIsMobile] = useState(false); // Device type (mobile/desktop)
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-    // Simple mobile detection
-    // TODO: make this more robust
     if (
       /android|iphone|ipad|iPod|opera mini|iemobile|wpdesktop/i.test(
         userAgent.toLowerCase()
@@ -24,41 +22,6 @@ const ImageUploader = () => {
       setIsMobile(true);
     }
   }, []);
-
-  // Format values for better display
-  const monthNames = {
-    "01": "January",
-    "02": "February",
-    "03": "March",
-    "04": "April",
-    "05": "May",
-    "06": "June",
-    "07": "July",
-    "08": "August",
-    "09": "September",
-    10: "October",
-    11: "November",
-    12: "December",
-  };
-
-  const matchAttributes = {
-    artist_name: "Artist",
-    album_name: "Release",
-    genres: "Genres",
-    release_date: "Released",
-    total_tracks: "# Tracks",
-    duration: "Duration",
-    tracks: "Tracks",
-    similarity: "Confidence",
-  };
-
-  const doNotShow = [
-    "artist_url",
-    "album_url",
-    "artist_image",
-    "album_image",
-    "total_duration",
-  ];
 
   const resetUploader = () => {
     setSelectedFile(null);
@@ -69,62 +32,6 @@ const ImageUploader = () => {
     setResponseData(null);
     setShowTracks(false);
     setIsDragging(false);
-  };
-
-  const formatDuration = (value) => {
-    const totalSeconds = parseInt(value, 10);
-    if (isNaN(totalSeconds) || totalSeconds < 0) return "0m 0s";
-
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
-    }
-    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
-  };
-
-  const formatValue = (key, value) => {
-    if (key === "genres" && Array.isArray(value)) {
-      return value.join(", ");
-    }
-    if (key === "release_date" && typeof value === "string") {
-      // Transform 'YYYY-MM' to 'Month YYYY'
-      const [year, month] = value.split("-");
-      return `${monthNames[month] || month} ${year}`;
-    }
-    if (key === "duration") {
-      return formatDuration(value);
-    }
-    if (key === "similarity") {
-      let color;
-      if (value < 25) color = "red";
-      else if (value >= 25 && value <= 75) color = "orange";
-      else color = "green";
-      return (
-        <span style={{ color, fontWeight: "bold" }}>
-          {parseFloat(value).toFixed(2)}
-        </span>
-      );
-    }
-    if (Array.isArray(value)) {
-      return `[ ${value
-        .map((v) => (typeof v === "object" ? JSON.stringify(v) : v))
-        .join(", ")} ]`;
-    }
-    if (typeof value === "object" && value !== null) {
-      return JSON.stringify(value);
-    }
-    return value;
-  };
-
-  // Handle file selection via input
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      processFile(file);
-    }
   };
 
   const processFile = (file) => {
@@ -143,6 +50,13 @@ const ImageUploader = () => {
     } catch (error) {
       console.error("Error in processFile:", error);
       setUploadError("Failed to process the selected file.");
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      processFile(file);
     }
   };
 
@@ -174,7 +88,11 @@ const ImageUploader = () => {
       }
     } catch (error) {
       console.error("Upload error:", error);
-      setUploadError("Failed to upload image. Please try again.");
+      if (error.response && error.response.data && error.response.data.message) {
+        setUploadError(error.response.data.message);
+      } else {
+        setUploadError("Failed to upload image. Please try again.");
+      }
     } finally {
       setUploading(false);
     }
@@ -202,13 +120,11 @@ const ImageUploader = () => {
     setIsDragging(false);
   }, []);
 
-  // Handle the drop event
   const handleDrop = useCallback(
     (event) => {
       event.preventDefault();
       setIsDragging(false);
 
-      // Clear previous results and errors
       setUploadSuccess(null);
       setUploadError(null);
       setResponseData(null);
@@ -221,7 +137,7 @@ const ImageUploader = () => {
       ) {
         const file = event.dataTransfer.files[0];
         console.log("File dropped:", file);
-        processFile(file); // Process the dropped file
+        processFile(file);
       } else {
         console.error("No files found in the drop event.");
       }
@@ -243,7 +159,6 @@ const ImageUploader = () => {
     };
   }, [handleDragStart, handleDragOver, handleDragLeave, handleDrop]);
 
-  // Cleanup the object URL to avoid memory leaks
   useEffect(() => {
     return () => {
       if (previewUrl) {
@@ -261,7 +176,6 @@ const ImageUploader = () => {
     cursor: "pointer",
   };
 
-  // Styles for drag overlay
   const dragOverlayStyle = {
     position: "fixed",
     top: 0,
@@ -275,7 +189,126 @@ const ImageUploader = () => {
     justifyContent: "center",
     color: "#fff",
     fontSize: "2rem",
-    pointerEvents: "none", // Allow clicks to pass through
+    pointerEvents: "none",
+  };
+
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const renderTrack = (track, index) => {
+    return (
+      <li key={index} style={{ 
+        marginBottom: "12px", 
+        padding: "0",
+        listStyle: "none",
+        borderBottom: index < 7 ? "1px solid #e0e0e0" : "none",
+        paddingBottom: "12px"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <span style={{ 
+              fontWeight: "600", 
+              fontSize: "1rem",
+              color: "#333"
+            }}>
+              {track.position}. {track.title}
+            </span>
+            {track.duration && (
+              <span style={{ 
+                marginLeft: "10px", 
+                color: "#666", 
+                fontSize: "0.9rem" 
+              }}>
+                {track.duration}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            {track.available_on?.spotify && (
+              track.spotify?.url ? (
+                <a
+                  href={track.spotify.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ 
+                    color: "#1db954", 
+                    fontSize: "0.85rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    textDecoration: "none",
+                    fontWeight: 600
+                  }}
+                >
+                  <i className="bi bi-spotify"></i>
+                  <span style={{ display: isMobile ? "none" : "inline" }}>Spotify</span>
+                </a>
+              ) : (
+                <span style={{ 
+                  color: "#1db954", 
+                  fontSize: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }}>
+                  <i className="bi bi-spotify"></i>
+                  <span style={{ display: isMobile ? "none" : "inline" }}>Spotify</span>
+                </span>
+              )
+            )}
+            {track.youtube ? (
+              <a 
+                href={track.youtube.url || track.youtube.lucky_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                style={{ 
+                  backgroundColor: "#ff0000",
+                  color: "white",
+                  padding: "6px 14px",
+                  borderRadius: "20px",
+                  textDecoration: "none",
+                  fontSize: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontWeight: "500",
+                  transition: "all 0.2s",
+                  border: "none"
+                }}
+                onMouseOver={(e) => e.target.style.backgroundColor = "#cc0000"}
+                onMouseOut={(e) => e.target.style.backgroundColor = "#ff0000"}
+              >
+                <i className="bi bi-youtube"></i>
+                <span style={{ display: isMobile ? "none" : "inline" }}>
+                  Play
+                </span>
+              </a>
+            ) : (
+              <span
+                style={{ 
+                  backgroundColor: "#e0e0e0",
+                  color: "#999",
+                  padding: "6px 14px",
+                  borderRadius: "20px",
+                  fontSize: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontWeight: "500",
+                  cursor: "not-allowed"
+                }}
+              >
+                <i className="bi bi-youtube"></i>
+                <span style={{ display: isMobile ? "none" : "inline" }}>N/A</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </li>
+    );
   };
 
   return (
@@ -288,7 +321,7 @@ const ImageUploader = () => {
         <div style={dragOverlayStyle}>Drop the image here to upload</div>
       )}
 
-      {/* Hide the header after upload */}
+      {/* Upload Section */}
       {!uploadSuccess && <h2>Upload Image</h2>}
 
       <div className="mb-3" style={{ marginTop: "20px" }}>
@@ -301,9 +334,9 @@ const ImageUploader = () => {
               alignItems: "center",
               justifyContent: "center",
               width: "100%",
-              maxWidth: "90%", // Slight padding for mobile
+              maxWidth: "90%",
               margin: "0 auto",
-              padding: "20px", // Increased padding for a taller button
+              padding: "20px",
               backgroundColor: "#007bff",
               color: "#fff",
               textAlign: "center",
@@ -316,16 +349,16 @@ const ImageUploader = () => {
             <i
               className="bi bi-camera"
               style={{
-                fontSize: "5rem", // Larger icon
-                marginBottom: "16px", // Space between icon and text
+                fontSize: "5rem",
+                marginBottom: "16px",
               }}
             ></i>
-            {isMobile ? "Take Photo" : "Choose File"} {/* Dynamic Label */}
+            {isMobile ? "Take Photo" : "Choose File"}
             <input
               id="fileInput"
               type="file"
               accept="image/*"
-              capture={isMobile ? "environment" : undefined} // Optional: Only add capture on mobile
+              capture={isMobile ? "environment" : undefined}
               onChange={handleFileChange}
               style={{ display: "none" }}
             />
@@ -333,6 +366,7 @@ const ImageUploader = () => {
         )}
       </div>
 
+      {/* Preview Section */}
       <div className="mb-3">
         {previewUrl && (
           <div className="mb-3">
@@ -383,7 +417,6 @@ const ImageUploader = () => {
         </div>
       )}
 
-      {/* Upload Another Button on Error */}
       {uploadError && (
         <div className="mt-3">
           <button
@@ -396,31 +429,17 @@ const ImageUploader = () => {
         </div>
       )}
 
+      {/* Results Section */}
       {uploadSuccess && responseData && (
-        <div className="mt-3">
-          {/* Title Below Spotify Button */}
-          {responseData.name && (
-            <h4
-              style={{
-                margin: "10px 0",
-                color: "#333",
-                fontFamily: "Arial, sans-serif",
-                textAlign: "center",
-                fontSize: "1.5rem",
-              }}
-            >
-              {responseData.name}
-            </h4>
-          )}
-
-          {/* Uploaded Image */}
-          {responseData.album_image && (
-            <div className="d-flex justify-content-center mt-2">
+        <div className="mt-4">
+          {/* Album Cover */}
+          {(responseData.album?.image || responseData.album_image) && (
+            <div className="d-flex justify-content-center mb-3">
               <img
-                src={`/media/${responseData.album_image}`}
-                alt="Album image"
+                src={responseData.album?.image || responseData.album_image}
+                alt="Album cover"
                 style={{
-                  maxWidth: isMobile ? "90%" : "30%",
+                  maxWidth: isMobile ? "70%" : "300px",
                   height: "auto",
                   borderRadius: "8px",
                   boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",
@@ -428,160 +447,208 @@ const ImageUploader = () => {
               />
             </div>
           )}
-        </div>
-      )}
 
-      {responseData && responseData.album_name && responseData.artist_name && (
-        <div className="mt-3">
-          <h4
-            style={{
-              margin: "10px 0",
-              color: "#333",
-              fontFamily: "Arial, sans-serif",
-              textAlign: "center",
-              fontSize: "1.5rem",
-            }}
-          >
-            {responseData.artist_name} - {responseData.album_name}
-          </h4>
-        </div>
-      )}
+          {/* Album Title */}
+          <h3 style={{ margin: "20px 0", color: "#333" }}>
+            {responseData.album?.artist || responseData.artist_name} - {responseData.album?.name || responseData.album_name}
+          </h3>
 
-      {/* Print the Server Response */}
-      {responseData && (
-        <div
-          className="mt-4"
-          style={{
-            backgroundColor: "#f9f9f9",
-            border: "1px solid #ddd",
-            borderRadius: "8px",
-            padding: "15px",
+          {/* Album Info */}
+          <div style={{
+            backgroundColor: "#ffffff",
+            border: "1px solid #e0e0e0",
+            borderRadius: "12px",
+            padding: "24px",
+            maxWidth: "650px",
+            margin: "0 auto 20px",
             textAlign: "left",
-            fontFamily: "monospace",
-            maxWidth: "80%",
-            margin: "0 auto",
-            overflowX: "auto",
-          }}
-        >
-          <div>
-            {Object.entries(responseData)
-              .filter(([key]) => !doNotShow.includes(key) && key !== "tracks")
-              .map(([key, value]) => (
-                <div key={key} style={{ marginBottom: "10px" }}>
-                  <span
-                    style={{
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {matchAttributes[key] || key}:
-                  </span>{" "}
-                  <span style={{ color: "#444" }}>
-                    {formatValue(key, value)}
-                  </span>
-                </div>
-              ))}
-            {/* Total Duration */}
-            {responseData.total_duration && (
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
+          }}>
+            <div style={{ marginBottom: "10px" }}>
+              <strong>Release:</strong> {responseData.album?.name || responseData.album_name}
+            </div>
+            <div style={{ marginBottom: "10px" }}>
+              <strong>Artist:</strong> {responseData.album?.artist || responseData.artist_name}
+            </div>
+            {(responseData.album?.release_date || responseData.release_date) && (
               <div style={{ marginBottom: "10px" }}>
-                <span style={{ fontWeight: "bold" }}>
-                  {matchAttributes["duration"]}:
-                </span>{" "}
-                <span style={{ color: "#444" }}>
-                  {formatDuration(responseData.total_duration)}
-                </span>
+                <strong>Released:</strong> {responseData.album?.release_date || responseData.release_date}
               </div>
             )}
-            {/* Show/Hide Tracks Button */}
-            {responseData.tracks && responseData.tracks.length > 0 && (
-              <button
-                className="btn btn-secondary mt-2"
-                onClick={() => setShowTracks((prev) => !prev)}
-                style={{
-                  fontSize: "1rem",
-                  padding: "5px 10px",
-                  cursor: "pointer",
-                }}
-              >
-                {showTracks ? "Hide Tracks" : "Show Tracks"}
-              </button>
+            {(responseData.album?.genres || responseData.genres) && responseData.album?.genres?.length > 0 && (
+              <div style={{ marginBottom: "10px" }}>
+                <strong>Genres:</strong> {(responseData.album?.genres || responseData.genres).join(", ")}
+              </div>
             )}
-            {showTracks &&
-              responseData.tracks &&
-              responseData.tracks.length > 0 && (
-                <ul
-                  style={{
-                    marginTop: "10px",
-                    paddingLeft: "40px",
-                    listStyleType: "decimal-leading-zero",
-                  }}
-                >
-                  {responseData.tracks.map((track, index) => {
-                    const minutes = Math.floor(track.duration / 60);
-                    const seconds = track.duration % 60;
+            {(responseData.price_info?.average_price || responseData.average_price || responseData.median_price || responseData.lowest_price || responseData.market_stats?.num_for_sale || responseData.num_for_sale) && (
+              <div style={{ 
+                marginBottom: "10px",
+                padding: "10px 12px",
+                backgroundColor: "#f8fafc",
+                border: "1px solid #e6eaf0",
+                borderRadius: "8px"
+              }}>
+                {(() => {
+                  const currencySymbols = {
+                    USD: "$", EUR: "€", GBP: "£", BRL: "R$", JPY: "¥",
+                    AUD: "A$", CAD: "C$", CHF: "CHF", CNY: "¥", SEK: "kr",
+                    NOK: "kr", DKK: "kr"
+                  };
+                  const currency = responseData.price_currency || responseData.market_stats?.currency || responseData.price_info?.currency || "USD";
+                  const symbol = currencySymbols[currency] || `${currency} `;
+                  const lowest = responseData.lowest_price ?? responseData.market_stats?.lowest_price;
+                  const forSale = responseData.num_for_sale ?? responseData.market_stats?.num_for_sale;
+                  const median = responseData.median_price ?? responseData.market_stats?.median_price;
+                  const avg = responseData.average_price ?? responseData.price_info?.average_price;
 
-                    // Dynamically determine the duration color
-                    const durationStyle = {
-                      color:
-                        minutes > 5 ? "red" : minutes < 3 ? "blue" : "inherit",
-                    };
-
-                    return (
-                      <li key={index} style={{ marginBottom: "10px" }}>
-                        <b>{track.name}</b> <br />
-                        <span style={durationStyle}>
-                          {minutes}m {seconds}s
-                        </span>
-                        <br />
-                        {(track.explicit === true ||
-                          track.explicit === null) && (
-                          <span style={{ color: "red" }}>
-                            Explicit
-                            {track.explicit === true ? "" : ": Unknown"} <br />
+                  return (
+                    <>
+                      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "#333", marginBottom: 6 }}>
+                        {Boolean(lowest) && (
+                          <span>
+                            <strong>Low:</strong> {symbol}{Number(lowest).toFixed(2)}
                           </span>
                         )}
-                      </li>
-                    );
-                  })}
+                        {Boolean(forSale) && (
+                          <span>
+                            <strong>For sale:</strong> {forSale}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "#333" }}>
+                        {Boolean(avg) && (
+                          <span>Avg: {symbol}{Number(avg).toFixed(2)}</span>
+                        )}
+                        {Boolean(median) && (
+                          <span>Median: {symbol}{Number(median).toFixed(2)}</span>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+            <div style={{ marginBottom: "10px" }}>
+              <strong>confidence:</strong> {Math.round(((responseData.identification?.confidence || responseData.confidence || 0) * 100))}%
+            </div>
+
+            {/* Links Section */}
+            <div style={{ 
+              marginTop: "20px", 
+              paddingTop: "20px", 
+              borderTop: "1px solid #e0e0e0" 
+            }}>
+              <h6 style={{ marginBottom: "12px", color: "#666" }}>Links</h6>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div>
+                  <strong style={{ color: "#666", fontSize: "0.9rem" }}>Discogs:</strong>{" "}
+                  {(responseData.links?.discogs || responseData.discogs_url) !== "unavailable" ? (
+                    <a 
+                      href={responseData.links?.discogs || responseData.discogs_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ color: "#0066cc", fontSize: "0.9rem" }}
+                    >
+                      View on Discogs →
+                    </a>
+                  ) : (
+                    <span style={{ color: "#999", fontSize: "0.9rem" }}>Not available</span>
+                  )}
+                </div>
+                <div>
+                  <strong style={{ color: "#666", fontSize: "0.9rem" }}>Spotify:</strong>{" "}
+                  {(responseData.links?.spotify || responseData.spotify_url) !== "unavailable" ? (
+                    <a 
+                      href={responseData.links?.spotify || responseData.spotify_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ color: "#1db954", fontSize: "0.9rem" }}
+                    >
+                      Listen on Spotify →
+                    </a>
+                  ) : (
+                    <span style={{ color: "#999", fontSize: "0.9rem" }}>Not available</span>
+                  )}
+                </div>
+                {Boolean(responseData.links?.bandcamp || responseData.bandcamp_url) && (
+                  <div>
+                    <strong style={{ color: "#666", fontSize: "0.9rem" }}>Bandcamp:</strong>{" "}
+                    <a 
+                      href={responseData.links?.bandcamp || responseData.bandcamp_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ color: "#1DA0C3", fontSize: "0.9rem" }}
+                    >
+                      Search on Bandcamp →
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Alternatives when confidence is low */}
+            {responseData.alternatives && responseData.alternatives.length > 0 && (
+              <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #e0e0e0" }}>
+                <h6 style={{ color: "#666" }}>Other possible matches</h6>
+                <ul style={{ paddingLeft: 18 }}>
+                  {responseData.alternatives.map((alt, idx) => (
+                    <li key={idx} style={{ marginBottom: 6 }}>
+                      <a href={alt.discogs} target="_blank" rel="noopener noreferrer">
+                        {alt.artist} - {alt.title}
+                      </a>
+                    </li>
+                  ))}
                 </ul>
-              )}
+              </div>
+            )}
+
+            {/* Tracks Section - Always Visible */}
+            {responseData.tracks?.tracklist && responseData.tracks.tracklist.length > 0 && (
+              <div style={{ 
+                marginTop: "24px", 
+                paddingTop: "24px", 
+                borderTop: "1px solid #e0e0e0" 
+              }}>
+                <h5 style={{ 
+                  marginBottom: "16px",
+                  fontSize: "1.1rem",
+                  color: "#333"
+                }}>
+                  Tracklist ({responseData.tracks.total || responseData.tracks.tracklist.length} tracks)
+                </h5>
+                <ul style={{ paddingLeft: 0, margin: 0 }}>
+                  {responseData.tracks.tracklist.map((track, index) => renderTrack(track, index))}
+                </ul>
+              </div>
+            )}
           </div>
-        </div>
-      )}
 
-      {/* Spotify Button */}
-      {responseData && responseData.album_url && (
-        <div className="mt-4 d-flex justify-content-center align-items-center">
-          <a
-            href={responseData.album_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-outline-secondary d-flex align-items-center"
-            style={buttonStyle}
-          >
-            <img
-              src="https://upload.wikimedia.org/wikipedia/commons/1/19/Spotify_logo_without_text.svg"
-              alt="Spotify"
-              style={{
-                width: "24px",
-                height: "24px",
-                marginRight: "10px",
-              }}
-            />
-            Open in Spotify
-          </a>
-        </div>
-      )}
+          {/* Spotify Button */}
+          {(responseData.links?.spotify || responseData.spotify_url) && responseData.links?.spotify !== "unavailable" && responseData.spotify_url !== "unavailable" && (
+            <div className="mt-3">
+              <a
+                href={responseData.links?.spotify || responseData.spotify_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-success d-flex align-items-center justify-content-center"
+                style={{ ...buttonStyle, maxWidth: "250px", margin: "0 auto" }}
+              >
+                <i className="bi bi-spotify" style={{ marginRight: "10px", fontSize: "1.5rem" }}></i>
+                Open in Spotify
+              </a>
+            </div>
+          )}
 
-      {/* Upload Another Button */}
-      {uploadSuccess && (
-        <div className="mt-3">
-          <button
-            className="btn btn-secondary"
-            onClick={handleUploadAnother}
-            style={buttonStyle}
-          >
-            Upload Another
-          </button>
+          {/* Upload Another Button */}
+          <div className="mt-4">
+            <button
+              className="btn btn-secondary"
+              onClick={handleUploadAnother}
+              style={buttonStyle}
+            >
+              Upload Another
+            </button>
+          </div>
         </div>
       )}
     </div>

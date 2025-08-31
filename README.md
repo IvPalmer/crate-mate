@@ -1,6 +1,13 @@
-# Vinyl Record Recognition System
+# 🎵 Crate-Mate: Enhanced Vinyl Record Recognition
 
-Companion tool for radio DJs to help facilitate exploration and discovery with physical collections of vinyl records. By leveraging computer vision, deep learning, and metadata aggregation, this tool aims to reduce the amount of time needed to retrieve relevant information about a given release.
+An AI-powered companion tool for vinyl diggers and DJs. Snap a photo of any record cover and instantly get listening links across multiple platforms, detailed metadata, and more!
+
+Based on a previous fork but now substantially rebuilt with key enhancements:
+- 🆕 **YouTube integration** - Find albums not on Spotify!
+- 🎯 **Multi-platform listening links** - Spotify, YouTube, and more coming soon
+- 📸 **Custom-trained AI model** - ~90% accuracy on vinyl recognition
+- 🎨 **Background removal** - Clean album art extraction
+- 🚀 **Production-ready** - Docker-based deployment
 
 ## Project Structure
 
@@ -11,8 +18,7 @@ The project is containerized with Docker to increase compatibility across platfo
 - **Database**: PostgreSQL with `pgvector` for vectorized queries. pgAdmin is available for browsing the database in a web browser.
 - **Nginx**: Reverse proxy for routing traffic between services.
 
-![architecture](./diagrams/png/album-wiz%20High-Level%20Architecture%20Diagram.png)
-![sequence](./diagrams/png/album-wiz%20High-Level%20Sequence%20Diagram.png)
+Architecture and sequence diagrams available in `diagrams/png`.
 
 ## Getting Started
 
@@ -34,21 +40,21 @@ Ensure you install the following locally first:
 1. Clone this repository:
 
    ```bash
-   git clone https://github.com/mdrxy/album-wiz.git
-   cd album-wiz
+   git clone https://github.com/IvPalmer/crate-mate.git
+   cd crate-mate
    ```
 
-2. Setup a `.env`:
+2. Run the automated setup:
 
     ```bash
-    cp .sample.env .env
-    nano .env
+    ./setup_crate_mate.sh
     ```
 
-    Enter values for `DISCOGS_TOKEN`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`.
+    The script will guide you through setup and prompt for API keys:
 
-    - Get a Discogs token by making a Discogs account and then [generating a personal access token](discogs.com/settings/developers).
-    - Get Spotify Client ID and secrets by making an app in their [developer dashboard](https://developer.spotify.com/).
+    - **Discogs Token** - [Get one here](https://www.discogs.com/settings/developers)
+    - **Spotify Credentials** - [Create app here](https://developer.spotify.com/dashboard)
+    - **YouTube API Key** 🆕 - [Get key here](https://console.cloud.google.com/apis/credentials) (Enable YouTube Data API v3)
 
 3. Build and start the app:
 
@@ -73,7 +79,7 @@ Ensure you install the following locally first:
     docker compose down
     ```
 
-    Note: this command must be ran from the project's top level directory (`/album-wiz`).
+    Note: run from the project's top level directory.
 
 ## Development
 
@@ -141,7 +147,7 @@ To modify the database schema:
 
     ```sh
     docker compose down
-    docker volume rm album-wiz_postgres_data
+    docker volume rm crate-mate_postgres_data
     ```
 
 3. Rebuild the database container:

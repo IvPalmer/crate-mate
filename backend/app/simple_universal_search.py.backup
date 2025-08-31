@@ -1,0 +1,1014 @@
+"""
+Simple universal search that works with Discogs API directly
+No database dependency - searches the entire Discogs catalog!
+"""
+import logging
+import requests
+import os
+from typing import Dict, List, Optional
+from PIL import Image
+import pytesseract
+import re
+from io import BytesIO
+from fuzzywuzzy import process, fuzz
+from skimage.feature import hog
+import numpy as np
+
+from .collectors.vision import VisionCollector
+from .collectors.discogs_image_search import DiscogsCollector as DiscogsImageSearchCollector
+from .collectors.discogs import DiscogsCollector as DiscogsTextCollector
+
+logger = logging.getLogger(__name__)
+
+DISCOGS_TOKEN = os.getenv('DISCOGS_TOKEN')
+DISCOGS_BASE_URL = 'https://api.discogs.com'
+
+
+class SimpleUniversalSearch:
+    """
+    Searches the entire Discogs catalog using a multi-stage hybrid approach.
+    """
+    
+    def __init__(self):
+        self.vision_collector = VisionCollector()
+        self.discogs_image_collector = DiscogsImageSearchCollector()
+        self.discogs_text_collector = DiscogsTextCollector()
+        self.headers = {
+            'Authorization': f'Discogs token={DISCOGS_TOKEN}',
+            'User-Agent': 'CrateMate/1.0'
+        }
+    
+    async def search_album(self, album_image: Image.Image) -> Dict:
+        """
+        Search for an album using image analysis and Discogs API
+        """
+        try:
+            # Pre-compute visual features of the uploaded image for ranking
+            query_image_ahash = self._average_hash(album_image)
+            query_image_dhash = self._difference_hash(album_image)
+            query_hue_hist = self._hue_histogram(album_image)
+            query_hog = self._hog_descriptor(album_image)
+            buffered = BytesIO()
+            album_image.save(buffered, format="JPEG")
+            image_bytes = buffered.getvalue()
+
+            # 1. Primary Method: Discogs Reverse Image Search
+            logger.info("Attempting Discogs reverse image search...")
+            discogs_result = await self.discogs_image_collector.search_by_image(image_bytes)
+            if discogs_result.get("success"):
+                logger.info("Found match via Discogs reverse image search.")
+                return discogs_result["album"]
+
+            # 2. Smart Fallback: Google Vision OCR + Discogs Text Search
+            logger.info("Discogs image search failed. Falling back to Vision API OCR for text search.")
+            vision_ocr_result = await self.vision_collector.extract_text_from_image(image_bytes)
+            if vision_ocr_result.get("success"):
+                text_lines = vision_ocr_result.get("text_lines", [])
+                if text_lines:
+                    # Try structured artist/title pairs first
+                    pairs = self._build_artist_title_pairs(text_lines)
+                    logger.info(f"Built {len(pairs)} artist/title pairs from OCR")
+                    for artist, title in pairs:
+                        logger.info(f"Structured search: artist='{artist}' title='{title}'")
+                        structured = self._search_discogs_structured(artist, title)
+                        if structured:
+                            logger.info("Found match via structured artist/title search.")
+                            return structured
+
+                    # Combine all extracted text to form a broad search query
+                    search_query = " ".join(text_lines)
+                    logger.info(f"Searching Discogs with extracted text: '{search_query}'")
+
+                    # Try our REST search with improved ranking first
+                    ranked_result = self._search_discogs(search_query)
+                    if ranked_result:
+                        logger.info("Found match via Vision OCR + Discogs ranked text search.")
+                        return ranked_result
+
+                    # Fall back to discogs_client-based search and rank within returned results
+                    text_search_result = self.discogs_text_collector.search_release(search_query)
+                    if text_search_result and text_search_result.get("success"):
+                        ranked_from_client = self._rank_from_list(text_search_result["results"], search_query)
+                        if ranked_from_client:
+                            logger.info("Found match via Discogs client search ranking.")
+                            return ranked_from_client
+
+            # 3. Final Fallback: Google Vision Web Detection (less reliable)
+            logger.info("OCR text search failed. Falling back to Vision API Web Detection.")
+            vision_web_result = await self.vision_collector.identify_album_cover(image_bytes)
+            
+            # --- Smarter Search Logic ---
+            # Reject generic guesses from the Vision API to force a fallback.
+            generic_terms = ["graphic design", "text", "font", "logo", "album cover"]
+            vision_guess = vision_web_result.get("best_guess", "").lower()
+            
+            if vision_web_result.get("success") and vision_guess not in generic_terms:
+                # Try best guess
+                logger.info(f"Searching Discogs with Vision API result: {vision_guess}")
+                result = self._search_discogs(vision_guess, query_image_ahash, query_image_dhash, query_hue_hist, query_hog)
+                if result:
+                    logger.info(f"Found match via Vision API: {result.get('title')}")
+                    return result
+
+                # If we have extra entities or titles, try them too
+                for hint_list_name in ["entities", "web_titles"]:
+                    for hint in vision_web_result.get(hint_list_name, [])[:5]:
+                        hint_clean = re.sub(r'[^a-zA-Z0-9\s\-\']', ' ', hint).strip()
+                        if len(hint_clean) < 3:
+                            continue
+                        logger.info(f"Searching Discogs with Vision hint from {hint_list_name}: {hint_clean}")
+                        hint_result = self._search_discogs(hint_clean, query_image_ahash, query_image_dhash, query_hue_hist, query_hog)
+                        if hint_result:
+                            logger.info(f"Found match via Vision hint: {hint_result.get('title')}")
+                            return hint_result
+
+            else:
+                logger.info(f"Vision API result '{vision_guess}' was rejected or failed. Proceeding to OCR.")
+
+            # Step 3: Fallback to Google Vision OCR
+            logger.info("Falling back to Vision API OCR.")
+            vision_ocr_result = await self.vision_collector.extract_text_from_image(image_bytes)
+
+            if vision_ocr_result.get("success"):
+                ocr_text_lines = vision_ocr_result["text_lines"]
+                queries = self._build_queries(ocr_text_lines)
+                logger.info(f"Built {len(queries)} search queries from Vision API OCR")
+                for query in queries:
+                    logger.info(f"Searching Discogs with Vision OCR query: {query}")
+                    result = self._search_discogs(query, query_image_ahash, query_image_dhash, query_hue_hist, query_hog)
+                    if result:
+                        logger.info(f"Found match via Vision API OCR: {result.get('title')}")
+                        return result
+
+            # Step 4: Last resort, try fuzzy matching on the OCR results
+            logger.info("All search methods failed so far. Trying fuzzy matching.")
+            all_ocr_lines = vision_ocr_result.get("text_lines", []) + self._extract_text(album_image)
+            if all_ocr_lines:
+                fuzzy_query = " ".join(all_ocr_lines)
+                logger.info(f"Attempting fuzzy search on combined OCR text: {fuzzy_query}")
+                result = self._fuzzy_search_discogs(
+                    fuzzy_query,
+                    query_image_ahash=query_image_ahash,
+                    query_image_dhash=query_image_dhash,
+                    query_hue_hist=query_hue_hist,
+                    query_hog=query_hog,
+                )
+                if result:
+                    logger.info(f"Found match via fuzzy search: {result.get('title')}")
+                    return result
+
+                # Try to recover likely artist names from noisy tokens
+                recovered_artist = self._try_artist_recovery(all_ocr_lines)
+                if recovered_artist:
+                    logger.info(f"Recovered probable artist from OCR tokens: {recovered_artist}")
+                    by_artist = self._search_discogs_by_artist(
+                        recovered_artist,
+                        prefer_album=True,
+                        hint_query=fuzzy_query,
+                        query_image_ahash=query_image_ahash,
+                        query_image_dhash=query_image_dhash,
+                        query_hue_hist=query_hue_hist,
+                        query_hog=query_hog,
+                    )
+                    if by_artist:
+                        logger.info(f"Found match via recovered artist search: {by_artist.get('title')}")
+                        return by_artist
+
+
+            # Step 5: Final fallback to simple local OCR
+            logger.info("Vision API OCR failed. Falling back to local Tesseract OCR.")
+            extracted_text = self._extract_text(album_image)
+            
+            # Step 6: Build search queries from local OCR
+            queries = self._build_queries(extracted_text)
+            logger.info(f"Built {len(queries)} search queries from local OCR")
+            
+            # Step 7: Search Discogs with local OCR queries
+            for query in queries:
+                logger.info(f"Searching Discogs with local OCR query: {query}")
+                result = self._search_discogs(query, query_image_ahash, query_image_dhash, query_hue_hist, query_hog)
+                if result:
+                    logger.info(f"Found match via local OCR: {result.get('title')}")
+                    return result
+            
+            # No results found
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in universal search: {str(e)}")
+            return None
+    
+    def _extract_text(self, image: Image.Image) -> List[str]:
+        """
+        Extract text from image using OCR
+        """
+        try:
+            # Use pytesseract for text extraction
+            text = pytesseract.image_to_string(image)
+            
+            # Split into lines and clean
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            
+            # Also try to extract with different preprocessing
+            # Convert to grayscale
+            gray_image = image.convert('L')
+            text_gray = pytesseract.image_to_string(gray_image)
+            lines_gray = [line.strip() for line in text_gray.split('\n') if line.strip()]
+            
+            # Combine and deduplicate
+            all_lines = list(set(lines + lines_gray))
+            
+            return all_lines[:10]  # Limit to top 10 lines
+            
+        except Exception as e:
+            logger.error(f"Error extracting text: {str(e)}")
+            return []
+    
+    def _build_queries(self, text_lines: List[str]) -> List[str]:
+        """
+        Build smart search queries from extracted text
+        """
+        queries = []
+        
+        # Remove very short lines
+        meaningful_lines = [line for line in text_lines if len(line) > 2]
+        
+        # Sort by length to prioritize more descriptive lines
+        meaningful_lines.sort(key=len, reverse=True)
+        
+        # Take the top 3-4 most meaningful lines
+        top_lines = meaningful_lines[:4]
+
+        # Generate more combinations
+        if len(top_lines) >= 2:
+            queries.append(f"{top_lines[0]} {top_lines[1]}")
+            queries.append(f"{top_lines[1]} {top_lines[0]}")
+        if len(top_lines) >= 3:
+            queries.append(f"{top_lines[0]} {top_lines[2]}")
+            queries.append(f"{top_lines[2]} {top_lines[0]}")
+            queries.append(f"{top_lines[1]} {top_lines[2]}")
+            queries.append(f"{top_lines[2]} {top_lines[1]}")
+
+        # Add individual lines as fallbacks
+        queries.extend(top_lines)
+        
+        # Look for catalog numbers
+        for line in text_lines:
+            # Common catalog number patterns
+            if re.match(r'^[A-Z]{2,5}[-\s]?\d{2,5}$', line):
+                queries.insert(0, line)  # Prioritize catalog numbers
+            elif re.match(r'^[A-Z]+-\d+$', line):
+                queries.insert(0, line)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_queries = []
+        for q in queries:
+            # Clean query of non-alphanumeric characters (except spaces)
+            cleaned_q = re.sub(r'[^a-zA-Z0-9\s-]', '', q).strip()
+            if cleaned_q and cleaned_q not in seen:
+                seen.add(cleaned_q)
+                unique_queries.append(cleaned_q)
+        
+        return unique_queries
+
+    def _build_artist_title_pairs(self, text_lines: List[str]) -> List[tuple]:
+        """
+        Build candidate (artist, title) pairs from OCR text lines.
+        Strategy: take the longest 4-6 lines, generate pair permutations,
+        and also try splitting lines containing separators.
+        """
+        # Normalize lines
+        cleaned = []
+        for line in text_lines:
+            normalized = re.sub(r'[^a-zA-Z0-9\s\-\&\']', ' ', line).strip()
+            if len(normalized) >= 3:
+                cleaned.append(normalized)
+
+        # Deduplicate while preserving order
+        seen = set()
+        ordered = []
+        for l in cleaned:
+            key = l.lower()
+            if key not in seen:
+                seen.add(key)
+                ordered.append(l)
+
+        # Prefer longer candidates
+        ordered.sort(key=len, reverse=True)
+        top = ordered[:6]
+
+        pairs: List[tuple] = []
+
+        # Generate permutations
+        for i in range(len(top)):
+            for j in range(len(top)):
+                if i == j:
+                    continue
+                a, b = top[i], top[j]
+                # Avoid obviously same strings
+                if a.lower() == b.lower():
+                    continue
+                # Heuristic: likely artist is shorter than title, so also try reversed
+                pairs.append((a, b))
+
+        # Split lines by common separators that might include both artist and title
+        for l in top:
+            if ' - ' in l:
+                artist, title = l.split(' - ', 1)
+                pairs.append((artist.strip(), title.strip()))
+
+        # Remove duplicates and overly short tokens
+        final_pairs: List[tuple] = []
+        seen_pair = set()
+        for artist, title in pairs:
+            if len(artist) < 2 or len(title) < 2:
+                continue
+            key = (artist.lower(), title.lower())
+            if key not in seen_pair:
+                seen_pair.add(key)
+                final_pairs.append((artist, title))
+
+        return final_pairs
+    
+    def _fuzzy_search_discogs(self, query: str, query_image_ahash: Optional[int] = None, query_image_dhash: Optional[int] = None, query_hue_hist: Optional[np.ndarray] = None, query_hog: Optional[np.ndarray] = None) -> Optional[Dict]:
+        """
+        Performs a fuzzy search on Discogs.
+        """
+        try:
+            # First, search Discogs for artists that sound like our query
+            artist_search_params = {
+                'q': query,
+                'type': 'artist',
+                'per_page': 100
+            }
+            response = requests.get(
+                f"{DISCOGS_BASE_URL}/database/search",
+                headers=self.headers,
+                params=artist_search_params
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                if not results:
+                    return None
+
+                # Use fuzzywuzzy to find the best artist match from the results
+                artist_names = [artist.get('title', '') for artist in results if artist.get('title')]
+                if not artist_names:
+                    return None
+                best_match, score = process.extractOne(query, artist_names)
+                
+                if score > 80:  # Confidence threshold
+                    logger.info(f"Fuzzy search found artist '{best_match}' with score {score}")
+                    # Prefer releases for that artist, ranked by album/LP format and any query tokens
+                    by_artist = self._search_discogs_by_artist(
+                        best_match,
+                        prefer_album=True,
+                        hint_query=query,
+                        query_image_ahash=query_image_ahash,
+                        query_image_dhash=query_image_dhash,
+                        query_hue_hist=query_hue_hist,
+                        query_hog=query_hog,
+                    )
+                    if by_artist:
+                        return by_artist
+                    # Fallback: perform a general search combined with artist name
+                    return self._search_discogs(f"{best_match} {query}")
+
+            return None
+        except Exception as e:
+            logger.error(f"Error during fuzzy search: {str(e)}")
+            return None
+
+    def _search_discogs_by_artist(self, artist: str, prefer_album: bool = True, hint_query: Optional[str] = None, query_image_ahash: Optional[int] = None, query_image_dhash: Optional[int] = None, query_hue_hist: Optional[np.ndarray] = None, query_hog: Optional[np.ndarray] = None) -> Optional[Dict]:
+        """
+        Search Discogs releases for a given artist and return the best ranked result.
+        """
+        try:
+            params = {
+                'artist': artist,
+                'type': 'release',
+                'format': 'Vinyl',
+                'per_page': 100
+            }
+            response = requests.get(
+                f"{DISCOGS_BASE_URL}/database/search",
+                headers=self.headers,
+                params=params
+            )
+            if response.status_code != 200:
+                return None
+
+            data = response.json()
+            results = data.get('results', [])
+            if not results:
+                return None
+
+            # Rank candidates; boost albums/LPs
+            remote_hash_cache: Dict[str, Dict[str, Optional[int] | Optional[np.ndarray]]] = {}
+
+            def artist_rank(c: Dict) -> float:
+                score = 0.0
+                fmt = ' '.join(c.get('format', [])).lower() if c.get('format') else ''
+                if prefer_album and 'album' in fmt:
+                    score += 0.5
+                if 'lp' in fmt:
+                    score += 0.25
+                if 'vinyl' in fmt:
+                    score += 0.1
+                # Prefer releases with images
+                if c.get('cover_image') or c.get('thumb'):
+                    score += 0.05
+                # If we have a hint query, compare to title
+                title = c.get('title', '')
+                score += (fuzz.token_set_ratio(hint_query.lower(), title.lower()) / 100.0) * 0.3 if hint_query else 0.0
+                # Visual similarity boosts
+                cover_url = c.get('cover_image') or c.get('thumb')
+                if cover_url and (query_image_ahash is not None or query_image_dhash is not None or query_hue_hist is not None or query_hog is not None):
+                    if cover_url not in remote_hash_cache:
+                        remote_hash_cache[cover_url] = {
+                            'ahash': self._remote_image_ahash(cover_url),
+                            'dhash': self._remote_image_dhash(cover_url),
+                            'hue_hist': self._remote_image_hue_hist(cover_url),
+                            'hog': self._remote_image_hog(cover_url)
+                        }
+                    rh = remote_hash_cache[cover_url]
+                    if query_image_ahash is not None and rh.get('ahash') is not None:
+                        dist = self._hamming_distance(query_image_ahash, rh['ahash'])
+                        sim = 1.0 - (dist / 64.0)
+                        score += sim * 0.6
+                    if query_image_dhash is not None and rh.get('dhash') is not None:
+                        dist = self._hamming_distance(query_image_dhash, rh['dhash'])
+                        sim = 1.0 - (dist / 64.0)
+                        score += sim * 0.6
+                    if query_hue_hist is not None and isinstance(rh.get('hue_hist'), np.ndarray):
+                        inter = float(np.minimum(query_hue_hist, rh['hue_hist']).sum())
+                        score += inter * 0.6
+                    if query_hog is not None and isinstance(rh.get('hog'), np.ndarray):
+                        inter = float(np.minimum(query_hog, rh['hog']).sum())
+                        score += inter * 0.6
+                # Prefer more recent releases slightly (keeps LP albums modern)
+                try:
+                    year = int(c.get('year', 0) or 0)
+                    score += min(max((year - 1960) / 100.0, 0), 0.2)
+                except Exception:
+                    pass
+                return score
+
+            best = max(results, key=artist_rank)
+            normalized = {
+                'id': best.get('id'),
+                'title': best.get('title', ''),
+                'artist': self._extract_artist(best) or artist,
+                'year': best.get('year', ''),
+                'label': best.get('label', [''])[0] if best.get('label') else '',
+                'catno': best.get('catno', ''),
+                'format': best.get('format', []),
+                'cover_image': best.get('cover_image', ''),
+                'thumb': best.get('thumb', ''),
+                'resource_url': best.get('resource_url', ''),
+                'uri': best.get('uri', '')
+            }
+            return normalized
+        except Exception as e:
+            logger.error(f"Error searching Discogs by artist: {str(e)}")
+            return None
+
+    def _search_discogs(self, query: str, query_image_ahash: Optional[int] = None, query_image_dhash: Optional[int] = None, query_hue_hist: Optional[np.ndarray] = None, query_hog: Optional[np.ndarray] = None) -> Optional[Dict]:
+        """
+        Search Discogs API
+        """
+        try:
+            # First try as catalog number
+            if re.match(r'^[A-Z].*\d', query):
+                params = {
+                    'catno': query,
+                    'type': 'release',
+                    'per_page': 50
+                }
+            else:
+                # General search
+                params = {
+                    'q': query,
+                    'type': 'release',
+                    'format': 'Vinyl',
+                    'per_page': 50
+                }
+            
+            response = requests.get(
+                f"{DISCOGS_BASE_URL}/database/search",
+                headers=self.headers,
+                params=params
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                
+                if results:
+                    # Limit candidates for remote image fetch when ranking
+                    limited = results[:12]
+                    # Rank results against the query and uploaded image to find the best match
+                    best_match = self._rank_discogs_candidates(
+                        limited,
+                        query=query,
+                        query_image_ahash=query_image_ahash,
+                        query_image_dhash=query_image_dhash,
+                        query_hue_hist=query_hue_hist,
+                        query_hog=query_hog,
+                    )
+                    if best_match:
+                        return best_match
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error searching Discogs: {str(e)}")
+            return None
+
+    def _search_discogs_structured(self, artist: str, title: str) -> Optional[Dict]:
+        """
+        Search Discogs with explicit artist and title parameters, then rank.
+        """
+        try:
+            params = {
+                'artist': artist,
+                'release_title': title,
+                'type': 'release',
+                'format': 'Vinyl',
+                'per_page': 50
+            }
+
+            response = requests.get(
+                f"{DISCOGS_BASE_URL}/database/search",
+                headers=self.headers,
+                params=params
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                if results:
+                    best = self._rank_discogs_candidates(
+                        results, expected_artist=artist, expected_title=title
+                    )
+                    if best:
+                        return best
+            return None
+        except Exception as e:
+            logger.error(f"Error in structured Discogs search: {str(e)}")
+            return None
+
+    def _rank_from_list(self, results: List[Dict], query: str, query_image_ahash: Optional[int] = None, query_image_dhash: Optional[int] = None, query_hue_hist: Optional[np.ndarray] = None, query_hog: Optional[np.ndarray] = None) -> Optional[Dict]:
+        """
+        Rank already materialized Discogs results (from discogs_client) against a query
+        and return the best-scoring normalized dict.
+        """
+        if not results:
+            return None
+
+        # Convert results into a comparable structure
+        converted: List[Dict] = []
+        for r in results:
+            try:
+                converted.append({
+                    'id': r.get('id'),
+                    'title': r.get('title', ''),
+                    'artist': r.get('artist', ''),
+                    'year': r.get('year', ''),
+                    'label': r.get('label', [''])[0] if r.get('label') else '',
+                    'catno': r.get('catno', ''),
+                    'format': r.get('format', []),
+                    'cover_image': r.get('cover_image', ''),
+                    'thumb': r.get('thumb', ''),
+                    'resource_url': r.get('resource_url', ''),
+                    'uri': r.get('uri', '')
+                })
+            except Exception:
+                # If structure differs slightly, skip
+                continue
+
+        limited = converted[:12]
+        return self._rank_discogs_candidates(
+            limited,
+            query=query,
+            query_image_ahash=query_image_ahash,
+            query_image_dhash=query_image_dhash,
+            query_hue_hist=query_hue_hist,
+            query_hog=query_hog,
+        )
+
+    def _rank_discogs_candidates(self, candidates: List[Dict], query: Optional[str] = None,
+                                  expected_artist: Optional[str] = None,
+                                  expected_title: Optional[str] = None,
+                                  query_image_ahash: Optional[int] = None,
+                                  query_image_dhash: Optional[int] = None,
+                                  query_hue_hist: Optional[np.ndarray] = None,
+                                  query_hog: Optional[np.ndarray] = None) -> Optional[Dict]:
+        """
+        Score and select the best Discogs match.
+        Uses fuzzy matching between query and "artist - title" plus format boosts for Vinyl/LP/Album.
+        """
+        if not candidates:
+            return None
+
+        # Cache for remote hashes to avoid re-downloading the same image
+        remote_hash_cache: Dict[str, Dict[str, Optional[int] | Optional[np.ndarray]]] = {}
+
+        def candidate_metrics(c: Dict) -> tuple:
+            artist = self._extract_artist(c)
+            title = c.get('title', '')
+            combined = f"{artist} {title}".strip().lower()
+            # Primary text score
+            text_score = 0.0
+            if expected_artist:
+                text_score += (fuzz.token_set_ratio(expected_artist.lower(), artist.lower()) / 100.0) * 0.5
+            if expected_title:
+                text_score += (fuzz.token_set_ratio(expected_title.lower(), title.lower()) / 100.0) * 0.5
+            if not expected_artist and not expected_title and query:
+                text_score += (fuzz.token_set_ratio(query.lower(), combined) / 100.0) * 0.9
+
+            # Metadata nudges
+            meta_score = 0.0
+            fmt = ' '.join(c.get('format', [])).lower() if c.get('format') else ''
+            if 'vinyl' in fmt:
+                meta_score += 0.03
+            if 'lp' in fmt or 'album' in fmt:
+                meta_score += 0.02
+            if c.get('year'):
+                meta_score += 0.02
+
+            # Visual similarity (tiebreaker)
+            cover_url = c.get('cover_image') or c.get('thumb')
+            placeholder = False
+            visual_sim_total = 0.0
+            if cover_url and (query_image_ahash is not None or query_image_dhash is not None or query_hue_hist is not None or query_hog is not None):
+                if cover_url not in remote_hash_cache:
+                    remote_hash_cache[cover_url] = {
+                        'ahash': self._remote_image_ahash(cover_url),
+                        'dhash': self._remote_image_dhash(cover_url),
+                        'hue_hist': self._remote_image_hue_hist(cover_url),
+                        'hog': self._remote_image_hog(cover_url)
+                    }
+                rh = remote_hash_cache[cover_url]
+                if query_image_ahash is not None and rh.get('ahash') is not None:
+                    dist = self._hamming_distance(query_image_ahash, rh['ahash'])
+                    sim = 1.0 - (dist / 64.0)
+                    visual_sim_total += sim * 0.5
+                if query_image_dhash is not None and rh.get('dhash') is not None:
+                    dist = self._hamming_distance(query_image_dhash, rh['dhash'])
+                    sim = 1.0 - (dist / 64.0)
+                    visual_sim_total += sim * 0.35
+                if query_hue_hist is not None and isinstance(rh.get('hue_hist'), np.ndarray):
+                    # Histogram intersection
+                    hh = rh['hue_hist']
+                    inter = float(np.minimum(query_hue_hist, hh).sum())
+                    visual_sim_total += inter * 0.15
+                if query_hog is not None and isinstance(rh.get('hog'), np.ndarray):
+                    # Cosine similarity
+                    denom = (np.linalg.norm(query_hog) * np.linalg.norm(rh['hog'])) or 1.0
+                    hog_sim = float(np.dot(query_hog, rh['hog']) / denom)
+                    visual_sim_total += hog_sim * 0.1
+
+            # HOG shape similarity (small tiebreaker; only considered if text is close later)
+            # We store only the remote image URL; HOG will be computed lazily in tie-break pass.
+            remote_url_for_hog = cover_url
+
+            # Placeholder images (e.g., Discogs spacer.gif) should be heavily penalized
+            if isinstance(cover_url, str) and ('spacer.gif' in cover_url or cover_url.endswith('.gif')):
+                placeholder = True
+                meta_score -= 0.3
+
+            primary = text_score + meta_score
+            return primary, visual_sim_total, placeholder, remote_url_for_hog, text_score
+
+        scored = []
+        for c in candidates:
+            s, vis, placeholder, remote_url_for_hog, text_s = candidate_metrics(c)
+            scored.append((s, vis, placeholder, remote_url_for_hog, text_s, c))
+
+        # Sort by score descending
+        scored.sort(key=lambda t: t[0], reverse=True)
+
+        # Define thresholds
+        threshold = 0.55 if query else 0.6
+        min_visual = 0.35  # require some visual agreement when available
+
+        # Pick the first candidate meeting constraints
+        for idx, (s, vis, placeholder, remote_url_for_hog, text_s, best) in enumerate(scored):
+            if s < threshold:
+                break
+            if placeholder:
+                continue
+            # Visual tiebreaker only when text scores are close
+            if idx + 1 < len(scored) and abs(text_s - scored[idx + 1][4]) <= 0.05:
+                s_next, vis_next, ph_next, remote_next, text_next, cand_next = scored[idx + 1]
+                if vis_next > vis:
+                    best = cand_next
+            # Build top alternatives for UI
+            alternatives = []
+            for alt_idx in range(0, min(4, len(scored))):
+                if alt_idx == idx:
+                    continue
+                ss, vvis, ph, rrem, ttext, cc = scored[alt_idx]
+                alternatives.append({
+                    'id': cc.get('id'),
+                    'title': cc.get('title', ''),
+                    'artist': self._extract_artist(cc),
+                    'cover_image': cc.get('cover_image', ''),
+                    'thumb': cc.get('thumb', ''),
+                    'score': float(ss)
+                })
+            return {
+                'id': best.get('id'),
+                'title': best.get('title', ''),
+                'artist': self._extract_artist(best),
+                'year': best.get('year', ''),
+                'label': best.get('label', [''])[0] if best.get('label') else '',
+                'catno': best.get('catno', ''),
+                'format': best.get('format', []),
+                'cover_image': best.get('cover_image', ''),
+                'thumb': best.get('thumb', ''),
+                'resource_url': best.get('resource_url', ''),
+                'uri': best.get('uri', ''),
+                'alternatives': alternatives
+            }
+
+        return None
+
+    def _try_artist_recovery(self, text_lines: List[str]) -> Optional[str]:
+        """
+        Attempt to recover an artist name by progressively relaxing and fuzzy matching
+        OCR tokens against Discogs artist search results.
+        Example: 'BRANTHER' -> 'BRAWTHER'.
+        """
+        # Extract candidate tokens (letters only)
+        tokens: List[str] = []
+        for line in text_lines:
+            for token in re.split(r"[^a-zA-Z]+", line):
+                if len(token) >= 5:
+                    tokens.append(token)
+
+        # Try each token
+        for token in tokens:
+            t = token.upper()
+            try:
+                # Generate OCR-correction variants, including the token itself
+                variants = {t}
+                variants.update(self._generate_ocr_variants(token))
+
+                # 1) Query Discogs with each full variant (type=artist)
+                aggregated_names: List[str] = []
+                for var in variants:
+                    params = {
+                        'q': var,
+                        'type': 'artist',
+                        'per_page': 100
+                    }
+                    resp = requests.get(
+                        f"{DISCOGS_BASE_URL}/database/search",
+                        headers=self.headers,
+                        params=params
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    js = resp.json()
+                    aggregated_names.extend([r.get('title', '') for r in js.get('results', []) if r.get('title')])
+
+                # 2) Also query with progressively shorter prefixes of the original token
+                for length in range(len(t), 2, -1):
+                    prefix = t[:length]
+                    params = {
+                        'q': prefix,
+                        'type': 'artist',
+                        'per_page': 100
+                    }
+                    resp = requests.get(
+                        f"{DISCOGS_BASE_URL}/database/search",
+                        headers=self.headers,
+                        params=params
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    js = resp.json()
+                    aggregated_names.extend([r.get('title', '') for r in js.get('results', []) if r.get('title')])
+
+                if not aggregated_names:
+                    continue
+
+                # Prefer single-token names to avoid false positives
+                candidates = [n.strip() for n in aggregated_names if n.strip() and len(n.strip().split()) == 1]
+                candidates = list(dict.fromkeys(candidates))  # de-dup preserve order
+                if not candidates:
+                    continue
+
+                # Score with the best variant
+                best_overall = None
+                best_score = -1
+                best_variant = None
+                for var in variants:
+                    res = process.extractOne(var, candidates, scorer=fuzz.ratio)
+                    if res:
+                        m, s = res
+                        if s > best_score:
+                            best_overall = m
+                            best_score = s
+                            best_variant = var
+
+                if best_overall and best_score >= 90 and abs(len(best_overall) - len(best_variant)) <= 2:
+                    return best_overall
+            except Exception:
+                continue
+        return None
+
+    def _generate_ocr_variants(self, token: str) -> List[str]:
+        """
+        Generate plausible corrections for common OCR confusions.
+        Focused, conservative substitutions to avoid false positives.
+        """
+        t = token
+        variants = set()
+
+        # Case-insensitive handling
+        s = t
+        lower = s.lower()
+
+        # Replace misreads where 'w' is seen as 'vv' or 'nt' and vice versa
+        variants.add(lower.replace('vv', 'w'))
+        variants.add(lower.replace('w', 'vv'))
+        variants.add(re.sub(r'nt', 'w', lower))
+        # Specific tri-gram confusion: 'nth' -> 'wth' (e.g., brant her -> brawther)
+        variants.add(lower.replace('nth', 'wth'))
+
+        # 'rn' often confused with 'm'
+        variants.add(lower.replace('rn', 'm'))
+        variants.add(lower.replace('m', 'rn'))
+
+        # Common letter-number confusions
+        variants.add(lower.replace('0', 'o'))
+        variants.add(lower.replace('1', 'l'))
+        variants.add(lower.replace('5', 's'))
+        variants.add(lower.replace('8', 'b'))
+
+        # Vowel confusions often seen in stylized fonts
+        variants.add(lower.replace('an', 'aw'))
+        variants.add(lower.replace('aw', 'an'))
+
+        # De-duplicate and uppercase for comparison with Discogs names
+        out = []
+        for v in variants:
+            v = v.strip()
+            if v:
+                out.append(v.upper())
+        return out
+
+    # ---------- Image hashing helpers ----------
+    def _average_hash(self, image: Image.Image, hash_size: int = 8) -> int:
+        """
+        Compute perceptual average hash (aHash) for a PIL image and return as 64-bit int.
+        """
+        img = image.convert('L').resize((hash_size, hash_size))
+        pixels = list(img.getdata())
+        avg = sum(pixels) / len(pixels)
+        bits = 0
+        for i, px in enumerate(pixels):
+            if px > avg:
+                bits |= (1 << i)
+        return bits
+
+    def _remote_image_hash(self, url: str, timeout: int = 5) -> Optional[int]:
+        """
+        Download remote image and compute aHash; return None on failure.
+        """
+        try:
+            r = requests.get(url, timeout=timeout)
+            if r.status_code != 200:
+                return None
+            from io import BytesIO as _BytesIO
+            img = Image.open(_BytesIO(r.content))
+            return self._average_hash(img)
+        except Exception:
+            return None
+
+    def _difference_hash(self, image: Image.Image, hash_size: int = 8) -> int:
+        """
+        Compute difference hash (dHash) for a PIL image and return as 64-bit int.
+        """
+        # Resize width one pixel larger for neighbor comparison
+        img = image.convert('L').resize((hash_size + 1, hash_size))
+        pixels = np.array(img, dtype=np.int16)
+        diff = pixels[:, 1:] > pixels[:, :-1]
+        bits = 0
+        idx = 0
+        for row in diff:
+            for v in row:
+                if v:
+                    bits |= (1 << idx)
+                idx += 1
+        return bits
+
+    def _remote_image_ahash(self, url: str, timeout: int = 5) -> Optional[int]:
+        try:
+            r = requests.get(url, timeout=timeout)
+            if r.status_code != 200:
+                return None
+            from io import BytesIO as _BytesIO
+            img = Image.open(_BytesIO(r.content))
+            return self._average_hash(img)
+        except Exception:
+            return None
+
+    def _remote_image_dhash(self, url: str, timeout: int = 5) -> Optional[int]:
+        try:
+            r = requests.get(url, timeout=timeout)
+            if r.status_code != 200:
+                return None
+            from io import BytesIO as _BytesIO
+            img = Image.open(_BytesIO(r.content))
+            return self._difference_hash(img)
+        except Exception:
+            return None
+
+    def _hue_histogram(self, image: Image.Image, bins: int = 24) -> np.ndarray:
+        """
+        Compute a normalized hue histogram (0-1) for quick color similarity.
+        """
+        img = image.convert('RGB').resize((128, 128))
+        arr = np.array(img)
+        # Convert to HSV
+        import colorsys
+        hsv = np.zeros((arr.shape[0], arr.shape[1], 3), dtype=np.float32)
+        for i in range(arr.shape[0]):
+            for j in range(arr.shape[1]):
+                r, g, b = arr[i, j] / 255.0
+                hsv[i, j] = colorsys.rgb_to_hsv(r, g, b)
+        h = hsv[:, :, 0].flatten()
+        hist, _ = np.histogram(h, bins=bins, range=(0.0, 1.0))
+        hist = hist.astype(np.float32)
+        if hist.sum() > 0:
+            hist /= hist.sum()
+        return hist
+
+    def _remote_image_hue_hist(self, url: str, timeout: int = 5) -> Optional[np.ndarray]:
+        try:
+            r = requests.get(url, timeout=timeout)
+            if r.status_code != 200:
+                return None
+            from io import BytesIO as _BytesIO
+            img = Image.open(_BytesIO(r.content))
+            return self._hue_histogram(img)
+        except Exception:
+            return None
+
+    def _hog_descriptor(self, image: Image.Image) -> np.ndarray:
+        """
+        Compute a compact HOG descriptor on a downscaled grayscale image.
+        """
+        img = image.convert('L').resize((128, 128))
+        arr = np.array(img, dtype=np.float32) / 255.0
+        desc = hog(arr, pixels_per_cell=(16, 16), cells_per_block=(2, 2), feature_vector=True)
+        return desc.astype(np.float32)
+
+    def _remote_image_hog(self, url: str, timeout: int = 5) -> Optional[np.ndarray]:
+        try:
+            r = requests.get(url, timeout=timeout)
+            if r.status_code != 200:
+                return None
+            from io import BytesIO as _BytesIO
+            img = Image.open(_BytesIO(r.content))
+            return self._hog_descriptor(img)
+        except Exception:
+            return None
+
+    def _hamming_distance(self, a: int, b: int) -> int:
+        """
+        Hamming distance between two 64-bit hash ints.
+        """
+        x = a ^ b
+        # Brian Kernighan’s algorithm
+        count = 0
+        while x:
+            x &= x - 1
+            count += 1
+        return count
+    
+    def _extract_artist(self, release: Dict) -> str:
+        """
+        Extract artist name from Discogs release
+        """
+        # Try different fields
+        if 'artist' in release:
+            return release['artist']
+        elif 'artists' in release and release['artists']:
+            return release['artists'][0].get('name', '')
+        elif 'artists_sort' in release:
+            return release['artists_sort']
+        
+        # Try to extract from title (format: "Artist - Album")
+        title = release.get('title', '')
+        if ' - ' in title:
+            return title.split(' - ')[0]
+        
+        return 'Unknown Artist'

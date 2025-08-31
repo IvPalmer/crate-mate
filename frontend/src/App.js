@@ -11,7 +11,7 @@ const App = () => {
   const [uploaderKey, setUploaderKey] = useState(0);
   const [expanded, setExpanded] = useState(false); // Track navbar expansion state
 
-  const handleAlbumWizClick = () => {
+  const handleHomeClick = () => {
     setUploaderKey((prevKey) => prevKey + 1);
     setExpanded(false);
   };
@@ -31,13 +31,13 @@ const App = () => {
         onToggle={(isExpanded) => setExpanded(isExpanded)} // Sync toggle with state
       >
         <Container fluid>
-          <Navbar.Brand as={Link} to="/" onClick={handleAlbumWizClick}>
-            <strong>album-wiz</strong>
+          <Navbar.Brand as={Link} to="/" onClick={handleHomeClick}>
+            <strong>Crate Mate</strong>
           </Navbar.Brand>
           <Navbar.Toggle aria-controls="navbar-nav" />
           <Navbar.Collapse id="navbar-nav">
             <Nav className="me-auto" onSelect={handleNavClick}>
-              <Nav.Link as={Link} to="/" onClick={handleAlbumWizClick}>
+              <Nav.Link as={Link} to="/" onClick={handleHomeClick}>
                 Match Record
               </Nav.Link>
               <Nav.Link as={Link} to="/add" onClick={handleNavClick}>
