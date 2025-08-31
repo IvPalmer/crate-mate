@@ -44,5 +44,5 @@ RUN if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] && [ -f "$GOOGLE_APPLICATION_CRE
 # Make port 8000 available to the world outside this container
 EXPOSE 8000
 
-# Run the command to start the server
-CMD ["sh", "startup.sh"]
+# Run the API server (Cloud Run sets $PORT)
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
