@@ -36,7 +36,7 @@ if uploaded is not None:
     # Show preview
     try:
         img = Image.open(uploaded)
-        st.image(img, caption="Uploaded image", use_column_width=True)
+        st.image(img, caption="Uploaded image", use_container_width=True)
     except Exception:
         st.warning("Couldn't preview image, but will still try to scan it.")
 
@@ -57,7 +57,7 @@ if uploaded is not None:
                 left, right = st.columns([1, 2])
                 with left:
                     if cover:
-                        st.image(cover, caption=None, use_column_width=True)
+                        st.image(cover, caption=None, use_container_width=True)
                 with right:
                     st.subheader(f"{artist_name} - {album_name}")
 
