@@ -12,7 +12,6 @@ import os
 from fastapi.responses import JSONResponse
 from PIL import Image
 
-from app.simple_universal_search import SimpleUniversalSearch
 from app.hybrid_search import HybridSearch
 
 
@@ -22,8 +21,17 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Create instances of both searchers
-simple_searcher = SimpleUniversalSearch()
+# Create instances (optionally include universal search if enabled)
+enable_universal = str(os.getenv("ENABLE_UNIVERSAL", "0")).lower() in ["1", "true", "yes"]
+simple_searcher = None
+if enable_universal:
+    try:
+        from app.simple_universal_search import SimpleUniversalSearch
+        simple_searcher = SimpleUniversalSearch()
+    except Exception as e:
+        logger.warning("Universal search disabled due to import error: %s", e)
+        simple_searcher = None
+
 hybrid_searcher = HybridSearch()
 
 app = FastAPI()
@@ -74,11 +82,13 @@ async def upload_image(image: UploadFile = File(...)) -> dict:
     try:
         logger.info("Starting hybrid search...")
         # Use hybrid search by default
-        use_hybrid = True  # Can be made configurable later
+        use_hybrid = True  # default path
         
         if use_hybrid:
             result = await hybrid_searcher.search_album(image_pil)
         else:
+            if simple_searcher is None:
+                raise HTTPException(status_code=503, detail="Universal search disabled on this deployment.")
             result = await simple_searcher.search_album(image_pil)
 
         if result and not result.get("error"):

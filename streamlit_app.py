@@ -34,11 +34,11 @@ uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "pn
 
 if uploaded is not None:
     # Show preview
+    # Do not display huge preview; just validate the image quietly
     try:
-        img = Image.open(uploaded)
-        st.image(img, caption="Uploaded image", use_container_width=True)
+        _ = Image.open(uploaded)
     except Exception:
-        st.warning("Couldn't preview image, but will still try to scan it.")
+        st.warning("Couldn't read image, but will still try to scan it.")
 
     with st.spinner("Identifying…"):
         files = {"image": (uploaded.name, uploaded.getvalue(), uploaded.type or "image/jpeg")}

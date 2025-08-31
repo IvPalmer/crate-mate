@@ -21,8 +21,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the container at /usr/src/app
-COPY ./requirements.txt /usr/src/app/requirements.txt
+# Copy the (slimmer) production requirements to speed up builds on Cloud Run
+COPY ./requirements-prod.txt /usr/src/app/requirements.txt
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
