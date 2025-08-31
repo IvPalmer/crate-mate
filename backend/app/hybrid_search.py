@@ -44,7 +44,10 @@ class HybridSearch:
         self.youtube_enhanced = YouTubeEnhancedSearch()
         self.youtube_ytdlp = YouTubeYtdlpSearch()
         self.bandcamp = BandcampCollector()
-        self.universal = SimpleUniversalSearch()
+
+        # Optionally enable the heavy CLIP-based universal search (disabled by default on Cloud Run)
+        self.enable_universal: bool = str(os.getenv("ENABLE_UNIVERSAL", "0")).lower() in ["1", "true", "yes"]
+        self.universal = SimpleUniversalSearch() if self.enable_universal else None
         
         # Simple in-memory cache with TTL
         self._cache = {}
@@ -102,17 +105,25 @@ class HybridSearch:
             cached_result = self._get_from_cache(image_hash)
             if cached_result:
                 return cached_result
-            # Run multiple methods in parallel
-            results = await asyncio.gather(
+            # Run multiple methods in parallel (skip universal if disabled)
+            tasks = [
                 self._gemini_search(album_image),
-                self._universal_search(album_image),
-                self._vision_ocr_search(album_image),
-                return_exceptions=True
-            )
-            
-            gemini_result = results[0] if not isinstance(results[0], Exception) else None
-            universal_result = results[1] if not isinstance(results[1], Exception) else None
-            ocr_result = results[2] if not isinstance(results[2], Exception) else None
+                self._vision_ocr_search(album_image)
+            ]
+            if self.enable_universal and self.universal is not None:
+                tasks.insert(1, self._universal_search(album_image))
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Unpack based on whether universal ran
+            if self.enable_universal and self.universal is not None:
+                gemini_result = results[0] if not isinstance(results[0], Exception) else None
+                universal_result = results[1] if not isinstance(results[1], Exception) else None
+                ocr_result = results[2] if not isinstance(results[2], Exception) else None
+            else:
+                gemini_result = results[0] if not isinstance(results[0], Exception) else None
+                universal_result = None
+                ocr_result = results[1] if len(results) > 1 and not isinstance(results[1], Exception) else None
             
             # Combine and rank all candidates
             all_candidates = []

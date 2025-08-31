@@ -41,6 +41,7 @@ SPOTIFY_CLIENT_SECRET=$(grep -E '^SPOTIFY_CLIENT_SECRET=' .env 2>/dev/null | cut
 GEMINI_API_KEY=$(grep -E '^GEMINI_API_KEY=' .env 2>/dev/null | cut -d'=' -f2- || true)
 YOUTUBE_API_KEY=$(grep -E '^YOUTUBE_API_KEY=' .env 2>/dev/null | cut -d'=' -f2- || true)
 ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://crate-mate.streamlit.app}
+ENABLE_UNIVERSAL=${ENABLE_UNIVERSAL:-0}
 
 echo "Building and pushing image with Cloud Build..."
 gcloud builds submit ./backend --tag "${IMAGE}"
@@ -54,7 +55,7 @@ gcloud run deploy "${SERVICE}" \
   --port 8000 \
   --memory 1Gi \
   --cpu 1 \
-  --set-env-vars DISCOGS_TOKEN="${DISCOGS_TOKEN}",SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}",SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}",GEMINI_API_KEY="${GEMINI_API_KEY}",YOUTUBE_API_KEY="${YOUTUBE_API_KEY}",ALLOWED_ORIGINS="${ALLOWED_ORIGINS}"
+  --set-env-vars DISCOGS_TOKEN="${DISCOGS_TOKEN}",SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}",SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}",GEMINI_API_KEY="${GEMINI_API_KEY}",YOUTUBE_API_KEY="${YOUTUBE_API_KEY}",ALLOWED_ORIGINS="${ALLOWED_ORIGINS}",ENABLE_UNIVERSAL="${ENABLE_UNIVERSAL}"
 
 echo "Environment variables applied during deploy."
 
