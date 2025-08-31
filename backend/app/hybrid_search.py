@@ -224,10 +224,11 @@ class HybridSearch:
     async def _vision_ocr_search(self, image: Image.Image) -> Dict:
         """Run Vision API OCR"""
         try:
-            # Convert image to bytes
+            # Convert image to bytes (ensure RGB to avoid RGBA->JPEG error)
             from io import BytesIO
             buffered = BytesIO()
-            image.save(buffered, format="JPEG")
+            safe_img = image.convert("RGB") if getattr(image, "mode", "") in ("RGBA", "P") else image
+            safe_img.save(buffered, format="JPEG")
             image_bytes = buffered.getvalue()
             
             return await self.vision.extract_text_from_image(image_bytes)
