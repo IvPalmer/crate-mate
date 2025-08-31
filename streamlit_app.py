@@ -34,14 +34,25 @@ uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "pn
 
 if uploaded is not None:
     # Show preview
-    # Do not display huge preview; just validate the image quietly
+    # Downscale large images client-side to reduce upload size (helps mobile)
     try:
-        _ = Image.open(uploaded)
+        img = Image.open(uploaded)
+        img = img.convert("RGB")
+        max_dim = 1280
+        w, h = img.size
+        scale = min(1.0, max_dim / max(w, h))
+        if scale < 1.0:
+            new_size = (int(w * scale), int(h * scale))
+            img = img.resize(new_size)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        payload = buf.getvalue()
+        files = {"image": (uploaded.name or "upload.jpg", payload, "image/jpeg")}
     except Exception:
-        st.warning("Couldn't read image, but will still try to scan it.")
+        # Fallback to raw upload if processing fails
+        files = {"image": (uploaded.name, uploaded.getvalue(), uploaded.type or "image/jpeg")}
 
     with st.spinner("Identifying…"):
-        files = {"image": (uploaded.name, uploaded.getvalue(), uploaded.type or "image/jpeg")}
         try:
             resp = requests.post(f"{API_BASE_URL}/upload", files=files, timeout=120)
             if resp.status_code == 200:

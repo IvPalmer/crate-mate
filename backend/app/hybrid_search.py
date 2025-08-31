@@ -22,7 +22,8 @@ from .collectors.youtube_direct import YouTubeDirectSearch
 from .collectors.youtube_enhanced import YouTubeEnhancedSearch
 from .collectors.youtube_ytdlp import YouTubeYtdlpSearch
 from .collectors.bandcamp import BandcampCollector
-from .simple_universal_search import SimpleUniversalSearch
+# NOTE: Avoid importing the heavy CLIP-based universal search at module import time.
+SimpleUniversalSearch = None  # will be imported lazily if enabled
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,14 @@ class HybridSearch:
 
         # Optionally enable the heavy CLIP-based universal search (disabled by default on Cloud Run)
         self.enable_universal: bool = str(os.getenv("ENABLE_UNIVERSAL", "0")).lower() in ["1", "true", "yes"]
-        self.universal = SimpleUniversalSearch() if self.enable_universal else None
+        self.universal = None
+        if self.enable_universal:
+            try:
+                from .simple_universal_search import SimpleUniversalSearch as _SUS
+                self.universal = _SUS()
+            except Exception as e:
+                logger.warning("Universal search unavailable: %s", e)
+                self.enable_universal = False
         
         # Simple in-memory cache with TTL
         self._cache = {}
