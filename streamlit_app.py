@@ -45,65 +45,80 @@ st.markdown(
         .track-actions a { padding: 4px 6px; font-size: 0.9rem; }
       }
 
-      /* Make camera preview area appear square and cropped */
+      /* Square camera preview */
       [data-testid="stCameraInput"] {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+        max-width: 500px;
+        margin: 0 auto;
       }
       
-      /* Camera preview container */
-      [data-testid="stCameraInput"] > div:first-child {
-        position: relative;
+      /* Camera video container - force square */
+      [data-testid="stCameraInput"] > div:nth-child(2) {
+        position: relative !important;
         width: 100% !important;
-        padding-bottom: 100% !important; /* 1:1 aspect ratio */
-        overflow: hidden;
-        border-radius: 8px;
+        height: 0 !important;
+        padding-bottom: 100% !important;
+        overflow: hidden !important;
+        border-radius: 12px !important;
+        background: #000 !important;
       }
       
-      /* Video/canvas elements inside preview */
-      [data-testid="stCameraInput"] video,
+      /* Video element - make it square and centered */
+      [data-testid="stCameraInput"] video {
+        position: absolute !important;
+        top: 50% !important;
+        left: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        min-width: 100% !important;
+        min-height: 100% !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: cover !important;
+      }
+      
+      /* Canvas for captured image */
       [data-testid="stCameraInput"] canvas {
         position: absolute !important;
-        top: 0;
-        left: 0;
+        top: 0 !important;
+        left: 0 !important;
         width: 100% !important;
         height: 100% !important;
-        object-fit: cover;
-        border-radius: 8px;
+        object-fit: cover !important;
       }
       
-      /* Hide the switch camera text, keep only icon */
-      [data-testid="stCameraInput"] [data-testid="stTooltipIcon"] {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        z-index: 10;
-      }
-      
-      [data-testid="stCameraInput"] [data-testid="stTooltipContent"] {
+      /* Hide tooltip text but keep icon */
+      [data-testid="stTooltipHoverTarget"] span {
         display: none !important;
       }
       
-      /* Style the switch camera button */
-      [data-testid="stCameraInput"] button[title*="Switch"] {
+      /* Switch camera button styling */
+      [data-testid="stCameraInput"] button[aria-label*="Switch"] {
         position: absolute !important;
-        top: 8px !important;
-        right: 8px !important;
-        z-index: 10 !important;
-        background: rgba(0, 0, 0, 0.5) !important;
+        top: 12px !important;
+        right: 12px !important;
+        z-index: 100 !important;
+        background: rgba(0, 0, 0, 0.6) !important;
+        border: none !important;
         border-radius: 50% !important;
-        width: 40px !important;
-        height: 40px !important;
+        width: 44px !important;
+        height: 44px !important;
+        padding: 0 !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
+        cursor: pointer !important;
       }
       
-      /* Take Photo button - place below preview */
-      [data-testid="stCameraInput"] > button:last-child {
+      [data-testid="stCameraInput"] button[aria-label*="Switch"]:hover {
+        background: rgba(0, 0, 0, 0.8) !important;
+      }
+      
+      /* Take Photo button */
+      [data-testid="stCameraInput"] > button:last-of-type {
         width: 100% !important;
-        margin-top: 8px !important;
+        margin-top: 16px !important;
+        padding: 12px !important;
+        font-size: 16px !important;
+        font-weight: 500 !important;
       }
     </style>
     """,
@@ -127,43 +142,63 @@ if camera_supported and st.session_state.show_camera:
     # Render camera inside a container to avoid layout glitches on iOS
     cam_container = st.container()
     with cam_container:
-        # Add JavaScript to request back camera when the Streamlit camera loads
+        # JavaScript to force back camera and handle camera switching
         st.markdown(
             """
             <script>
-              // Wait for camera elements to load and request back camera
-              const checkCamera = setInterval(() => {
+              // Override getUserMedia to prefer back camera
+              if (!window._cameraOverrideApplied) {
+                window._cameraOverrideApplied = true;
+                const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+                
+                navigator.mediaDevices.getUserMedia = function(constraints) {
+                  if (constraints && constraints.video && typeof constraints.video === 'object') {
+                    // Force back camera
+                    constraints.video.facingMode = { ideal: 'environment' };
+                  } else if (constraints && constraints.video === true) {
+                    constraints.video = { facingMode: { ideal: 'environment' } };
+                  }
+                  return originalGetUserMedia(constraints);
+                };
+              }
+              
+              // Also try to switch existing camera streams
+              setTimeout(() => {
                 const videos = document.querySelectorAll('[data-testid="stCameraInput"] video');
-                if (videos.length > 0) {
-                  clearInterval(checkCamera);
-                  // Try to switch to back camera
-                  videos.forEach(video => {
-                    if (video.srcObject && video.srcObject.getVideoTracks) {
-                      const tracks = video.srcObject.getVideoTracks();
-                      if (tracks.length > 0) {
-                        // Request new stream with back camera
-                        navigator.mediaDevices.getUserMedia({ 
-                          video: { facingMode: { exact: 'environment' } } 
-                        }).then(stream => {
-                          video.srcObject = stream;
-                        }).catch(() => {
-                          // Fallback to ideal if exact fails
-                          navigator.mediaDevices.getUserMedia({ 
-                            video: { facingMode: { ideal: 'environment' } } 
-                          }).then(stream => {
-                            video.srcObject = stream;
-                          }).catch(() => {
-                            // Keep default camera if both fail
-                          });
-                        });
-                      }
+                videos.forEach(video => {
+                  if (video.srcObject) {
+                    const tracks = video.srcObject.getTracks();
+                    tracks.forEach(track => track.stop());
+                    
+                    navigator.mediaDevices.getUserMedia({ 
+                      video: { facingMode: { exact: 'environment' } } 
+                    }).then(stream => {
+                      video.srcObject = stream;
+                    }).catch(() => {
+                      navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: 'environment' } 
+                      }).then(stream => {
+                        video.srcObject = stream;
+                      });
+                    });
+                  }
+                });
+              }, 500);
+              
+              // Click the switch camera button once if front camera is detected
+              setTimeout(() => {
+                const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
+                if (switchBtn) {
+                  // Check if we're on mobile and using front camera
+                  navigator.mediaDevices.enumerateDevices().then(devices => {
+                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                    if (videoDevices.length > 1) {
+                      // Likely has multiple cameras, click switch button once
+                      switchBtn.click();
                     }
                   });
                 }
-              }, 100);
-              
-              // Clean up after 5 seconds
-              setTimeout(() => clearInterval(checkCamera), 5000);
+              }, 1000);
             </script>
             """,
             unsafe_allow_html=True,
