@@ -44,6 +44,16 @@ st.markdown(
         .track-pos { width: 2.2rem; }
         .track-actions a { padding: 4px 6px; font-size: 0.9rem; }
       }
+
+      /* Make camera preview area appear square and cropped */
+      [data-testid="stCameraInput"] video,
+      [data-testid="stCameraInput"] img {
+        width: 100% !important;
+        height: auto !important;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        border-radius: 8px;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -51,19 +61,23 @@ st.markdown(
 
 camera_supported = hasattr(st, "camera_input")
 
-if camera_supported:
-    camera_tab, upload_tab = st.tabs(["Camera", "Upload file"])
-    with camera_tab:
-        camera_img = st.camera_input(
-            "Take a photo of the cover",
-            help="We will auto-crop a square around the center to focus on the cover"
-        )
-    with upload_tab:
-        uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "png", "webp"]) 
-else:
-    st.info("Camera capture not supported on this deployment or browser. Use file upload.")
-    camera_img = None
-    uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "png", "webp"]) 
+if "show_camera" not in st.session_state:
+    st.session_state.show_camera = False
+
+btn_col1, btn_col2 = st.columns(2)
+with btn_col1:
+    if camera_supported and st.button("Use camera", use_container_width=True):
+        st.session_state.show_camera = True
+with btn_col2:
+    uploaded = st.file_uploader("Upload image", type=["jpg", "jpeg", "png", "webp"], label_visibility="visible")
+
+camera_img = None
+if camera_supported and st.session_state.show_camera:
+    camera_img = st.camera_input(
+        "Take a photo of the cover",
+        help="We will auto-crop a square around the center to focus on the cover"
+    )
+    st.session_state.show_camera = False  # collapse after one capture intent
 
 selected_file = camera_img or uploaded
 
@@ -109,11 +123,7 @@ if selected_file is not None:
     try:
         payload, fname = _prepare_image_bytes(selected_file)
         # Show what will be uploaded (already square-cropped if enabled)
-        try:
-            st.write("Cropped preview (square)")
-            st.image(Image.open(BytesIO(payload)), use_container_width=True)
-        except Exception:
-            pass
+        # No explicit preview to avoid large scroll on mobile
         files = {"image": (fname, payload, "image/jpeg")}
     except Exception:
         files = {"image": (getattr(selected_file, "name", "upload.jpg"), selected_file.getvalue(), getattr(selected_file, "type", None) or "image/jpeg")}
