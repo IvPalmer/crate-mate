@@ -59,8 +59,15 @@ st.markdown(
         object-fit: cover;
         border-radius: 8px;
       }
+      /* Aggressive square enforcement for nested wrappers on Safari */
+      [data-testid="stCameraInput"] * {
+        aspect-ratio: 1 / 1 !important;
+      }
       /* Hide the built-in switch camera tooltip/button */
-      [aria-label="Switch camera"] { display: none !important; }
+      [aria-label="Switch camera"],
+      [aria-label*="Switch"],
+      [title*="Switch"],
+      [data-testid="stTooltipHoverTarget"] { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
