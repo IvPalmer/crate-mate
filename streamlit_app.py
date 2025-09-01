@@ -50,6 +50,9 @@ st.markdown(
       [data-testid="stCameraInput"] > div {
         aspect-ratio: 1 / 1 !important;
         width: 100% !important;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
       }
       [data-testid="stCameraInput"] video,
       [data-testid="stCameraInput"] canvas,
@@ -60,11 +63,11 @@ st.markdown(
         object-fit: cover;
         border-radius: 8px;
       }
-      /* Hide the built-in switch camera tooltip/button */
-      [aria-label="Switch camera"],
-      [aria-label*="Switch"],
-      [title*="Switch"],
-      [data-testid="stTooltipHoverTarget"] { display: none !important; }
+      /* Place capture button below preview */
+      [data-testid="stCameraInput"] button {
+        order: 2;
+        width: 100% !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -87,6 +90,22 @@ if camera_supported and st.session_state.show_camera:
     # Render camera inside a container to avoid layout glitches on iOS
     cam_container = st.container()
     with cam_container:
+        # Prefer environment (back) camera on mobile by hinting with HTML via markdown
+        st.markdown(
+            """
+            <video id="cm_preview" playsinline autoplay muted style="display:none"></video>
+            <script>
+              (async () => {
+                try {
+                  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+                  const v = document.getElementById('cm_preview');
+                  if (v) { v.srcObject = stream; }
+                } catch (e) { /* ignore */ }
+              })();
+            </script>
+            """,
+            unsafe_allow_html=True,
+        )
         camera_img = st.camera_input(
             "Take a photo of the cover",
             help="We will auto-crop a square around the center to focus on the cover"
