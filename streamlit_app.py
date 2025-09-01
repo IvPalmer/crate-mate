@@ -45,28 +45,25 @@ st.markdown(
         .track-actions a { padding: 4px 6px; font-size: 0.9rem; }
       }
 
-      /* Square camera preview */
+      /* Square camera preview container */
       [data-testid="stCameraInput"] {
         max-width: 500px;
         margin: 0 auto;
-        display: flex !important;
-        flex-direction: column !important;
+        position: relative;
       }
       
-      /* Video container wrapper - create a square container */
-      [data-testid="stCameraInput"] > div:has(video),
-      [data-testid="stCameraInput"] > div:has(canvas) {
+      /* Create a wrapper for the video that's square */
+      [data-testid="stCameraInput"] > div:nth-child(2) {
         position: relative !important;
         width: 100% !important;
         padding-bottom: 100% !important;
         height: 0 !important;
-        overflow: hidden !important;
+        overflow: visible !important;
         border-radius: 12px !important;
         background: #000 !important;
-        order: 1 !important;
       }
       
-      /* Video element - absolute position within square container */
+      /* Video element - absolute within square container */
       [data-testid="stCameraInput"] video,
       [data-testid="stCameraInput"] canvas {
         position: absolute !important;
@@ -75,14 +72,34 @@ st.markdown(
         width: 100% !important;
         height: 100% !important;
         object-fit: cover !important;
+        border-radius: 12px !important;
       }
       
-      /* Hide tooltip text but keep icon */
+      /* Take Photo button - move it way down with absolute positioning */
+      [data-testid="stCameraInput"] button:not([aria-label*="Switch"]) {
+        position: absolute !important;
+        top: calc(100% + 16px) !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 12px !important;
+        font-size: 16px !important;
+        font-weight: 500 !important;
+        z-index: 10 !important;
+      }
+      
+      /* Add padding to camera input to accommodate button */
+      [data-testid="stCameraInput"] {
+        padding-bottom: 60px !important;
+      }
+      
+      /* Hide tooltip text */
       [data-testid="stTooltipHoverTarget"] span {
         display: none !important;
       }
       
-      /* Switch camera button - position absolute to video container */
+      /* Switch camera button */
       [data-testid="stCameraInput"] button[aria-label*="Switch"] {
         position: absolute !important;
         top: 12px !important;
@@ -94,35 +111,11 @@ st.markdown(
         width: 44px !important;
         height: 44px !important;
         padding: 0 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        cursor: pointer !important;
       }
       
-      [data-testid="stCameraInput"] button[aria-label*="Switch"]:hover {
-        background: rgba(0, 0, 0, 0.8) !important;
-      }
-      
-      /* Take Photo button - force below video with specific targeting */
-      [data-testid="stCameraInput"] > button[data-testid="baseButton-primary"],
-      [data-testid="stCameraInput"] > button:not([aria-label*="Switch"]):not([title*="Switch"]) {
-        position: static !important;
-        display: block !important;
-        width: 100% !important;
-        margin: 16px 0 0 0 !important;
-        padding: 12px !important;
-        font-size: 16px !important;
-        font-weight: 500 !important;
-        order: 2 !important;
-        transform: none !important;
-        top: auto !important;
-        left: auto !important;
-      }
-      
-      /* Ensure Take Photo button is not inside the video container */
-      [data-testid="stCameraInput"] > div button[data-testid="baseButton-primary"] {
-        display: none !important;
+      /* Force button text to be visible */
+      [data-testid="stCameraInput"] button:not([aria-label*="Switch"]) p {
+        margin: 0 !important;
       }
     </style>
     """,
@@ -241,42 +234,68 @@ if camera_supported and st.session_state.show_camera:
                 }
               })();
               
-              // Move Take Photo button outside of video container
-              function fixButtonPlacement() {
+              // Debug and fix button placement
+              function debugCameraStructure() {
                 const cameraInput = document.querySelector('[data-testid="stCameraInput"]');
                 if (!cameraInput) return;
                 
-                // Find the Take Photo button
-                const buttons = cameraInput.querySelectorAll('button');
-                let takePhotoBtn = null;
+                console.log('Camera structure:', cameraInput);
                 
-                buttons.forEach(btn => {
-                  if (btn.textContent === 'Take Photo' && !btn.getAttribute('aria-label')?.includes('Switch')) {
-                    takePhotoBtn = btn;
+                // Find all buttons
+                const buttons = cameraInput.querySelectorAll('button');
+                buttons.forEach((btn, idx) => {
+                  console.log(`Button ${idx}:`, btn.textContent, btn.getAttribute('aria-label'), btn);
+                  
+                  // If this is the Take Photo button
+                  if (btn.textContent?.includes('Take Photo') && !btn.getAttribute('aria-label')?.includes('Switch')) {
+                    // Force absolute positioning via style attribute (highest specificity)
+                    btn.style.cssText = `
+                      position: absolute !important;
+                      top: calc(100% + 16px) !important;
+                      left: 0 !important;
+                      right: 0 !important;
+                      width: 100% !important;
+                      margin: 0 !important;
+                      padding: 12px !important;
+                      font-size: 16px !important;
+                      font-weight: 500 !important;
+                      z-index: 10 !important;
+                      background-color: #0068c9 !important;
+                      color: white !important;
+                      border: none !important;
+                      border-radius: 4px !important;
+                      cursor: pointer !important;
+                    `;
                   }
                 });
                 
-                if (takePhotoBtn) {
-                  // Check if button is inside a div (video container)
-                  if (takePhotoBtn.parentElement !== cameraInput) {
-                    // Move button to be direct child of camera input
-                    cameraInput.appendChild(takePhotoBtn);
-                  }
+                // Ensure camera input has proper height
+                cameraInput.style.paddingBottom = '60px';
+              }
+              
+              // Run multiple times as DOM updates
+              debugCameraStructure();
+              setTimeout(debugCameraStructure, 100);
+              setTimeout(debugCameraStructure, 300);
+              setTimeout(debugCameraStructure, 500);
+              setTimeout(debugCameraStructure, 1000);
+              
+              // Watch for any changes
+              const observer = new MutationObserver(() => {
+                debugCameraStructure();
+              });
+              
+              setTimeout(() => {
+                const cameraContainer = document.querySelector('[data-testid="stCameraInput"]');
+                if (cameraContainer) {
+                  observer.observe(cameraContainer, { 
+                    childList: true, 
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['style']
+                  });
                 }
-              }
-              
-              // Run button fix multiple times as DOM updates
-              fixButtonPlacement();
-              setTimeout(fixButtonPlacement, 100);
-              setTimeout(fixButtonPlacement, 500);
-              setTimeout(fixButtonPlacement, 1000);
-              
-              // Watch for DOM changes
-              const observer = new MutationObserver(fixButtonPlacement);
-              const cameraContainer = document.querySelector('[data-testid="stCameraInput"]');
-              if (cameraContainer) {
-                observer.observe(cameraContainer, { childList: true, subtree: true });
-              }
+              }, 500);
             </script>
             """,
             unsafe_allow_html=True,
