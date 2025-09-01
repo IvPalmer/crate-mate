@@ -58,9 +58,10 @@ st.markdown(
         width: 100% !important;
         padding-bottom: 100% !important;
         height: 0 !important;
-        overflow: visible !important;
+        overflow: hidden !important;  /* Changed back to hidden to contain video */
         border-radius: 12px !important;
         background: #000 !important;
+        margin-bottom: 70px !important;  /* Add space for button below */
       }
       
       /* Video element - absolute within square container */
@@ -75,23 +76,16 @@ st.markdown(
         border-radius: 12px !important;
       }
       
-      /* Take Photo button - move it way down with absolute positioning */
+      /* Take Photo button - position below video container */
       [data-testid="stCameraInput"] button:not([aria-label*="Switch"]) {
-        position: absolute !important;
-        top: calc(100% + 16px) !important;
-        left: 0 !important;
-        right: 0 !important;
+        position: relative !important;
+        display: block !important;
         width: 100% !important;
-        margin: 0 !important;
+        margin: -50px 0 0 0 !important;  /* Negative margin to pull up closer to video */
         padding: 12px !important;
         font-size: 16px !important;
         font-weight: 500 !important;
         z-index: 10 !important;
-      }
-      
-      /* Add padding to camera input to accommodate button */
-      [data-testid="stCameraInput"] {
-        padding-bottom: 60px !important;
       }
       
       /* Hide tooltip text */
@@ -102,15 +96,18 @@ st.markdown(
       /* Switch camera button */
       [data-testid="stCameraInput"] button[aria-label*="Switch"] {
         position: absolute !important;
-        top: 12px !important;
-        right: 12px !important;
+        top: 16px !important;  /* Moved down slightly to avoid cutoff */
+        right: 16px !important;  /* Moved left slightly to avoid cutoff */
         z-index: 100 !important;
         background: rgba(0, 0, 0, 0.6) !important;
         border: none !important;
         border-radius: 50% !important;
-        width: 44px !important;
-        height: 44px !important;
+        width: 40px !important;  /* Slightly smaller to fit better */
+        height: 40px !important;
         padding: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
       }
       
       /* Force button text to be visible */
@@ -164,12 +161,31 @@ if camera_supported and st.session_state.show_camera:
                         if (tracks.length > 0) {
                           const settings = tracks[0].getSettings();
                           
-                          // Check if using front camera (facingMode might be 'user')
-                          if (!settings.facingMode || settings.facingMode === 'user') {
-                            // Stop current tracks
+                          // Always try to switch on first attempt
+                          if (attemptCount === 1) {
+                            // Just click the switch button immediately
+                            const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
+                            if (switchBtn) {
+                              console.log('Clicking switch camera button');
+                              setTimeout(() => {
+                                switchBtn.click();
+                                // Check again after switch
+                                setTimeout(() => {
+                                  const newTracks = video.srcObject?.getVideoTracks();
+                                  if (newTracks && newTracks.length > 0) {
+                                    const newSettings = newTracks[0].getSettings();
+                                    if (newSettings.facingMode === 'user') {
+                                      // Still front camera, click again
+                                      switchBtn.click();
+                                    }
+                                  }
+                                }, 500);
+                              }, 300);
+                            }
+                          } else if (!settings.facingMode || settings.facingMode === 'user') {
+                            // Try programmatic switch as backup
                             tracks.forEach(track => track.stop());
                             
-                            // Request back camera
                             navigator.mediaDevices.getUserMedia({ 
                               video: { 
                                 facingMode: { exact: 'environment' },
@@ -178,9 +194,8 @@ if camera_supported and st.session_state.show_camera:
                               } 
                             }).then(stream => {
                               video.srcObject = stream;
-                              console.log('Switched to back camera');
+                              console.log('Switched to back camera programmatically');
                             }).catch(err => {
-                              // Try without exact constraint
                               navigator.mediaDevices.getUserMedia({ 
                                 video: { 
                                   facingMode: 'environment',
@@ -189,14 +204,8 @@ if camera_supported and st.session_state.show_camera:
                                 } 
                               }).then(stream => {
                                 video.srcObject = stream;
-                                console.log('Switched to back camera (fallback)');
                               }).catch(err2 => {
-                                console.log('Could not switch to back camera:', err2);
-                                // As last resort, click the switch button
-                                const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
-                                if (switchBtn && attemptCount === 1) {
-                                  setTimeout(() => switchBtn.click(), 100);
-                                }
+                                console.log('Could not switch cameras:', err2);
                               });
                             });
                           }
@@ -250,12 +259,12 @@ if camera_supported and st.session_state.show_camera:
                   if (btn.textContent?.includes('Take Photo') && !btn.getAttribute('aria-label')?.includes('Switch')) {
                     // Force absolute positioning via style attribute (highest specificity)
                     btn.style.cssText = `
-                      position: absolute !important;
-                      top: calc(100% + 16px) !important;
+                      position: relative !important;
+                      top: auto !important;
                       left: 0 !important;
                       right: 0 !important;
                       width: 100% !important;
-                      margin: 0 !important;
+                      margin: 16px 0 0 0 !important;
                       padding: 12px !important;
                       font-size: 16px !important;
                       font-weight: 500 !important;
@@ -265,6 +274,7 @@ if camera_supported and st.session_state.show_camera:
                       border: none !important;
                       border-radius: 4px !important;
                       cursor: pointer !important;
+                      display: block !important;
                     `;
                   }
                 });
