@@ -3,6 +3,11 @@ import requests
 import streamlit as st
 from io import BytesIO
 from PIL import Image, ImageOps
+try:
+    from streamlit_back_camera_input import back_camera_input
+    back_camera_available = True
+except ImportError:
+    back_camera_available = False
 
 
 st.set_page_config(page_title="Crate‑Mate", page_icon="🎚️", layout="wide")
@@ -63,212 +68,46 @@ with btn_col2:
 
 camera_img = None
 if camera_supported and st.session_state.show_camera:
-    # Complete CSS override for camera
+    # Add minimal CSS for square camera format
     st.markdown("""
         <style>
-            /* Force camera container layout */
-            section[data-testid="stHorizontalBlock"]:has([data-testid="stCameraInput"]) {
+            /* Square camera format for back camera input */
+            [data-testid="stImage"], 
+            [data-testid="stCameraInput"],
+            .stImage,
+            .stCameraInput {
                 max-width: 500px !important;
                 margin: 0 auto !important;
             }
             
-            /* Camera input wrapper */
-            [data-testid="stCameraInput"] {
-                display: block !important;
+            /* Make video square */
+            video {
                 width: 100% !important;
-            }
-            
-            /* Video container - force square */
-            [data-testid="stCameraInput"] > div:has(video) {
-                position: relative !important;
-                width: 100% !important;
-                height: 0 !important;
-                padding-bottom: 100% !important;
-                background: #000 !important;
-                border-radius: 12px !important;
-                overflow: hidden !important;
-                margin: 0 !important;
-            }
-            
-            /* Video/canvas positioning */
-            [data-testid="stCameraInput"] video,
-            [data-testid="stCameraInput"] canvas {
-                position: absolute !important;
-                top: 50% !important;
-                left: 50% !important;
-                transform: translate(-50%, -50%) !important;
-                min-width: 100% !important;
-                min-height: 100% !important;
-                width: auto !important;
                 height: auto !important;
+                aspect-ratio: 1 / 1 !important;
                 object-fit: cover !important;
+                border-radius: 12px !important;
             }
             
-            /* Hide only the Take Photo button - be very specific */
-            [data-testid="stCameraInput"] button {
-                display: none !important;
-            }
-            
-            /* But exclude any button that might be the switch button */
-            [data-testid="stCameraInput"] button[aria-label*="Switch"],
-            [data-testid="stCameraInput"] button[title*="Switch"],
-            [data-testid="stCameraInput"] button[aria-label*="switch"],
-            [data-testid="stCameraInput"] button[title*="switch"],
-            [data-testid="stCameraInput"] button:nth-child(2),
-            [data-testid="stCameraInput"] > div > button:last-child {
-                display: flex !important;
-            }
-            
-            /* Show and position switch camera button */
-            [data-testid="stCameraInput"] button[aria-label*="Switch"],
-            [data-testid="stCameraInput"] button[title*="Switch"],
-            [data-testid="stCameraInput"] button:has(svg) {
-                display: flex !important;
-                position: absolute !important;
-                top: 15px !important;
-                right: 15px !important;
-                width: 40px !important;
-                height: 40px !important;
-                background: rgba(0, 0, 0, 0.5) !important;
-                border: none !important;
-                border-radius: 50% !important;
-                align-items: center !important;
-                justify-content: center !important;
-                cursor: pointer !important;
-                z-index: 100 !important;
-                color: white !important;
-                padding: 0 !important;
-            }
-            
-            /* Ensure switch icon is visible */
-            [data-testid="stCameraInput"] button svg {
-                width: 24px !important;
-                height: 24px !important;
-                fill: white !important;
-            }
-            
-            /* Tooltip */
+            /* Hide tooltips */
             [data-testid="stTooltipContent"] {
                 display: none !important;
             }
         </style>
     """, unsafe_allow_html=True)
     
-    # Create container for camera
-    with st.container():
-        camera_col1, camera_col2, camera_col3 = st.columns([1, 8, 1])
-        with camera_col2:
-            camera_img = st.camera_input(
-                "Camera",
-                label_visibility="collapsed",
-                key="camera_widget"
-            )
-    
-    # Add Take Photo button separately below
-    if camera_img is None:
-        button_col1, button_col2, button_col3 = st.columns([1, 8, 1])
-        with button_col2:
-            if st.button("Take Photo", key="custom_take_photo", use_container_width=True):
-                # This will trigger the camera to take a photo programmatically
-                st.markdown("""
-                    <script>
-                        // Find and click the hidden Take Photo button
-                        const buttons = document.querySelectorAll('[data-testid="stCameraInput"] button');
-                        buttons.forEach(btn => {
-                            if (btn.textContent && btn.textContent.includes('Take Photo')) {
-                                btn.click();
-                            }
-                        });
-                    </script>
-                """, unsafe_allow_html=True)
-    
-    # Auto-switch to back camera
-    st.markdown("""
-        <script>
-            // More aggressive auto-switch to back camera
-            let attempts = 0;
-            const maxAttempts = 5;
-            
-            // Debug function to log all buttons
-            const debugButtons = () => {
-                const allButtons = document.querySelectorAll('[data-testid="stCameraInput"] button');
-                console.log('Found buttons:', allButtons.length);
-                allButtons.forEach((btn, idx) => {
-                    console.log(`Button ${idx}:`, {
-                        text: btn.textContent,
-                        ariaLabel: btn.getAttribute('aria-label'),
-                        title: btn.getAttribute('title'),
-                        hasIcon: btn.querySelector('svg') !== null,
-                        classes: btn.className
-                    });
-                });
-            };
-            
-            const trySwitch = () => {
-                if (attempts >= maxAttempts) return;
-                attempts++;
-                
-                debugButtons();
-                
-                // Find switch button - try multiple approaches
-                let switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
-                if (!switchBtn) switchBtn = document.querySelector('[data-testid="stCameraInput"] button[title*="Switch"]');
-                if (!switchBtn) {
-                    // Find button with SVG icon that's not the take photo button
-                    const buttons = document.querySelectorAll('[data-testid="stCameraInput"] button');
-                    for (let btn of buttons) {
-                        if (btn.querySelector('svg') && !btn.textContent.includes('Take')) {
-                            switchBtn = btn;
-                            break;
-                        }
-                    }
-                }
-                
-                if (switchBtn) {
-                    console.log(`Attempt ${attempts}: Clicking switch camera button`);
-                    switchBtn.click();
-                    
-                    // Check if we need to click again (some devices need double click)
-                    setTimeout(() => {
-                        const video = document.querySelector('[data-testid="stCameraInput"] video');
-                        if (video && video.srcObject) {
-                            const tracks = video.srcObject.getVideoTracks();
-                            if (tracks.length > 0) {
-                                const settings = tracks[0].getSettings();
-                                if (settings.facingMode === 'user' && attempts < maxAttempts) {
-                                    console.log('Still front camera, clicking again');
-                                    switchBtn.click();
-                                }
-                            }
-                        }
-                    }, 500);
-                } else {
-                    // Button not found yet, try again
-                    setTimeout(trySwitch, 200);
-                }
-            };
-            
-            // Start trying immediately and with delays
-            setTimeout(trySwitch, 100);
-            setTimeout(trySwitch, 500);
-            setTimeout(trySwitch, 1000);
-            setTimeout(trySwitch, 1500);
-            setTimeout(trySwitch, 2000);
-            
-            // Also try on video element appearance
-            const observer = new MutationObserver((mutations) => {
-                const video = document.querySelector('[data-testid="stCameraInput"] video');
-                if (video && attempts < maxAttempts) {
-                    trySwitch();
-                }
-            });
-            
-            const cameraContainer = document.querySelector('[data-testid="stCameraInput"]');
-            if (cameraContainer) {
-                observer.observe(cameraContainer, { childList: true, subtree: true });
-            }
-        </script>
-    """, unsafe_allow_html=True)
+    # Use back camera input if available, otherwise fall back to regular camera
+    if back_camera_available:
+        st.info("📸 Click on the camera view to take a photo")
+        # back_camera_input automatically uses the back camera and takes photo on click
+        camera_img = back_camera_input(key="back_camera")
+    else:
+        # Fallback to regular camera_input if back camera component not installed
+        camera_img = st.camera_input(
+            "Take a photo of the cover",
+            help="We will auto-crop a square around the center to focus on the cover",
+            key="camera_widget"
+        )
 
 selected_file = camera_img or uploaded
 
