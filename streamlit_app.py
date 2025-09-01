@@ -46,14 +46,21 @@ st.markdown(
       }
 
       /* Make camera preview area appear square and cropped */
+      [data-testid="stCameraInput"],
+      [data-testid="stCameraInput"] > div {
+        aspect-ratio: 1 / 1 !important;
+        width: 100% !important;
+      }
       [data-testid="stCameraInput"] video,
+      [data-testid="stCameraInput"] canvas,
       [data-testid="stCameraInput"] img {
         width: 100% !important;
-        height: auto !important;
-        aspect-ratio: 1 / 1;
+        height: 100% !important;
         object-fit: cover;
         border-radius: 8px;
       }
+      /* Hide the built-in switch camera tooltip/button */
+      [aria-label="Switch camera"] { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
