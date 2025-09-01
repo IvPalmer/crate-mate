@@ -46,27 +46,64 @@ st.markdown(
       }
 
       /* Make camera preview area appear square and cropped */
-      [data-testid="stCameraInput"],
-      [data-testid="stCameraInput"] > div {
-        aspect-ratio: 1 / 1 !important;
-        width: 100% !important;
+      [data-testid="stCameraInput"] {
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 16px;
       }
-      [data-testid="stCameraInput"] video,
-      [data-testid="stCameraInput"] canvas,
-      [data-testid="stCameraInput"] img {
+      
+      /* Camera preview container */
+      [data-testid="stCameraInput"] > div:first-child {
+        position: relative;
         width: 100% !important;
-        height: auto !important;
-        aspect-ratio: 1 / 1 !important;
+        padding-bottom: 100% !important; /* 1:1 aspect ratio */
+        overflow: hidden;
+        border-radius: 8px;
+      }
+      
+      /* Video/canvas elements inside preview */
+      [data-testid="stCameraInput"] video,
+      [data-testid="stCameraInput"] canvas {
+        position: absolute !important;
+        top: 0;
+        left: 0;
+        width: 100% !important;
+        height: 100% !important;
         object-fit: cover;
         border-radius: 8px;
       }
-      /* Place capture button below preview */
-      [data-testid="stCameraInput"] button {
-        order: 2;
+      
+      /* Hide the switch camera text, keep only icon */
+      [data-testid="stCameraInput"] [data-testid="stTooltipIcon"] {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 10;
+      }
+      
+      [data-testid="stCameraInput"] [data-testid="stTooltipContent"] {
+        display: none !important;
+      }
+      
+      /* Style the switch camera button */
+      [data-testid="stCameraInput"] button[title*="Switch"] {
+        position: absolute !important;
+        top: 8px !important;
+        right: 8px !important;
+        z-index: 10 !important;
+        background: rgba(0, 0, 0, 0.5) !important;
+        border-radius: 50% !important;
+        width: 40px !important;
+        height: 40px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      
+      /* Take Photo button - place below preview */
+      [data-testid="stCameraInput"] > button:last-child {
         width: 100% !important;
+        margin-top: 8px !important;
       }
     </style>
     """,
@@ -90,25 +127,51 @@ if camera_supported and st.session_state.show_camera:
     # Render camera inside a container to avoid layout glitches on iOS
     cam_container = st.container()
     with cam_container:
-        # Prefer environment (back) camera on mobile by hinting with HTML via markdown
+        # Add JavaScript to request back camera when the Streamlit camera loads
         st.markdown(
             """
-            <video id="cm_preview" playsinline autoplay muted style="display:none"></video>
             <script>
-              (async () => {
-                try {
-                  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
-                  const v = document.getElementById('cm_preview');
-                  if (v) { v.srcObject = stream; }
-                } catch (e) { /* ignore */ }
-              })();
+              // Wait for camera elements to load and request back camera
+              const checkCamera = setInterval(() => {
+                const videos = document.querySelectorAll('[data-testid="stCameraInput"] video');
+                if (videos.length > 0) {
+                  clearInterval(checkCamera);
+                  // Try to switch to back camera
+                  videos.forEach(video => {
+                    if (video.srcObject && video.srcObject.getVideoTracks) {
+                      const tracks = video.srcObject.getVideoTracks();
+                      if (tracks.length > 0) {
+                        // Request new stream with back camera
+                        navigator.mediaDevices.getUserMedia({ 
+                          video: { facingMode: { exact: 'environment' } } 
+                        }).then(stream => {
+                          video.srcObject = stream;
+                        }).catch(() => {
+                          // Fallback to ideal if exact fails
+                          navigator.mediaDevices.getUserMedia({ 
+                            video: { facingMode: { ideal: 'environment' } } 
+                          }).then(stream => {
+                            video.srcObject = stream;
+                          }).catch(() => {
+                            // Keep default camera if both fail
+                          });
+                        });
+                      }
+                    }
+                  });
+                }
+              }, 100);
+              
+              // Clean up after 5 seconds
+              setTimeout(() => clearInterval(checkCamera), 5000);
             </script>
             """,
             unsafe_allow_html=True,
         )
         camera_img = st.camera_input(
             "Take a photo of the cover",
-            help="We will auto-crop a square around the center to focus on the cover"
+            help="We will auto-crop a square around the center to focus on the cover",
+            label_visibility="collapsed"  # Hide the label to reduce clutter
         )
     # Keep camera visible until a capture is made or user switches actions
 
