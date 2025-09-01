@@ -3,11 +3,6 @@ import requests
 import streamlit as st
 from io import BytesIO
 from PIL import Image, ImageOps
-try:
-    from streamlit_back_camera_input import back_camera_input
-    back_camera_available = True
-except ImportError:
-    back_camera_available = False
 
 
 st.set_page_config(page_title="Crate‑Mate", page_icon="🎚️", layout="wide")
@@ -68,135 +63,34 @@ with btn_col2:
 
 camera_img = None
 if camera_supported and st.session_state.show_camera:
-    # Add CSS and JavaScript fixes for mobile video display
+    # Simple CSS for square camera preview - nothing fancy
     st.markdown("""
         <style>
-            /* Square camera format for back camera input */
-            [data-testid="stImage"], 
-            [data-testid="stCameraInput"],
-            .stImage,
-            .stCameraInput {
-                max-width: 500px !important;
-                margin: 0 auto !important;
+            /* Center the camera and make it reasonably sized */
+            [data-testid="stCameraInput"] {
+                max-width: 500px;
+                margin: 0 auto;
+                display: block;
             }
             
-            /* Fix video display on mobile - remove transforms and use simple positioning */
-            video {
-                width: 100% !important;
-                height: auto !important;
-                aspect-ratio: 1 / 1 !important;
-                object-fit: cover !important;
-                border-radius: 12px !important;
-                /* Important for iOS Safari */
-                -webkit-transform: translateZ(0) !important;
-                transform: translateZ(0) !important;
-                position: relative !important;
-                z-index: 1 !important;
-                background: #000 !important;
-            }
-            
-            /* Container fixes for mobile */
-            .stImage img,
-            .stCameraInput > div {
-                position: relative !important;
-                z-index: 1 !important;
-            }
-            
-            /* Hide tooltips */
-            [data-testid="stTooltipContent"] {
-                display: none !important;
+            /* Make the video preview square-ish */
+            [data-testid="stCameraInput"] video {
+                aspect-ratio: 1 / 1;
+                object-fit: cover;
+                border-radius: 8px;
+                width: 100%;
+                height: auto;
             }
         </style>
-        
-        <script>
-            // Fix for mobile video black screen
-            document.addEventListener('DOMContentLoaded', function() {
-                // Wait a bit for video elements to be created
-                setTimeout(function() {
-                    const videos = document.querySelectorAll('video');
-                    videos.forEach(function(video) {
-                        // Essential attributes for mobile
-                        video.setAttribute('playsinline', 'true');
-                        video.setAttribute('webkit-playsinline', 'true');
-                        video.setAttribute('autoplay', 'true');
-                        video.setAttribute('muted', 'true');
-                        
-                        // Force video to play
-                        video.play().catch(function(e) {
-                            console.log('Video play error:', e);
-                        });
-                        
-                        // iOS specific fix - reload video stream
-                        if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
-                            const stream = video.srcObject;
-                            video.srcObject = null;
-                            video.srcObject = stream;
-                        }
-                    });
-                }, 1000);
-                
-                // Also watch for new video elements
-                const observer = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(mutation) {
-                        mutation.addedNodes.forEach(function(node) {
-                            if (node.tagName === 'VIDEO') {
-                                node.setAttribute('playsinline', 'true');
-                                node.setAttribute('webkit-playsinline', 'true');
-                                node.setAttribute('autoplay', 'true');
-                                node.setAttribute('muted', 'true');
-                                
-                                // Try to play
-                                setTimeout(function() {
-                                    node.play().catch(function(e) {
-                                        console.log('Video play error:', e);
-                                    });
-                                }, 100);
-                            }
-                        });
-                    });
-                });
-                
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true
-                });
-            });
-        </script>
     """, unsafe_allow_html=True)
     
-    # Use back camera input if available, otherwise fall back to regular camera
-    if back_camera_available:
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.info("📸 Click on the camera view to take a photo")
-        with col2:
-            if st.button("Switch Mode", key="switch_mode", help="Use standard camera if having issues"):
-                st.session_state.use_standard_camera = not st.session_state.get('use_standard_camera', False)
-                st.rerun()
-        
-        # Allow switching between back camera and standard camera
-        if st.session_state.get('use_standard_camera', False):
-            st.warning("Using standard camera mode. You may need to manually switch to back camera.")
-            camera_img = st.camera_input(
-                "Take a photo of the cover",
-                help="Click the camera switch icon if front camera opens",
-                key="camera_widget_standard"
-            )
-        else:
-            # back_camera_input automatically uses the back camera and takes photo on click
-            try:
-                camera_img = back_camera_input(key="back_camera")
-            except Exception as e:
-                st.error(f"Camera error: {str(e)}. Try 'Switch Mode' button above.")
-                camera_img = None
-    else:
-        # Fallback to regular camera_input if back camera component not installed
-        st.warning("Back camera component not available. Using standard camera.")
-        camera_img = st.camera_input(
-            "Take a photo of the cover",
-            help="We will auto-crop a square around the center to focus on the cover",
-            key="camera_widget"
-        )
+    # Just use the standard camera input - simple and reliable
+    st.info("📸 Take a photo of the record cover")
+    camera_img = st.camera_input(
+        "Take a photo", 
+        label_visibility="collapsed",
+        help="If front camera opens, use the switch camera button"
+    )
 
 selected_file = camera_img or uploaded
 
