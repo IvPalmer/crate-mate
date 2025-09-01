@@ -104,13 +104,25 @@ if camera_supported and st.session_state.show_camera:
                 object-fit: cover !important;
             }
             
-            /* Hide all buttons initially */
+            /* Hide only the Take Photo button - be very specific */
             [data-testid="stCameraInput"] button {
                 display: none !important;
             }
             
+            /* But exclude any button that might be the switch button */
+            [data-testid="stCameraInput"] button[aria-label*="Switch"],
+            [data-testid="stCameraInput"] button[title*="Switch"],
+            [data-testid="stCameraInput"] button[aria-label*="switch"],
+            [data-testid="stCameraInput"] button[title*="switch"],
+            [data-testid="stCameraInput"] button:nth-child(2),
+            [data-testid="stCameraInput"] > div > button:last-child {
+                display: flex !important;
+            }
+            
             /* Show and position switch camera button */
-            [data-testid="stCameraInput"] button[aria-label*="Switch"] {
+            [data-testid="stCameraInput"] button[aria-label*="Switch"],
+            [data-testid="stCameraInput"] button[title*="Switch"],
+            [data-testid="stCameraInput"] button:has(svg) {
                 display: flex !important;
                 position: absolute !important;
                 top: 15px !important;
@@ -124,6 +136,15 @@ if camera_supported and st.session_state.show_camera:
                 justify-content: center !important;
                 cursor: pointer !important;
                 z-index: 100 !important;
+                color: white !important;
+                padding: 0 !important;
+            }
+            
+            /* Ensure switch icon is visible */
+            [data-testid="stCameraInput"] button svg {
+                width: 24px !important;
+                height: 24px !important;
+                fill: white !important;
             }
             
             /* Tooltip */
@@ -164,22 +185,88 @@ if camera_supported and st.session_state.show_camera:
     # Auto-switch to back camera
     st.markdown("""
         <script>
-            // Auto-switch to back camera after delay
-            let switched = false;
+            // More aggressive auto-switch to back camera
+            let attempts = 0;
+            const maxAttempts = 5;
+            
+            // Debug function to log all buttons
+            const debugButtons = () => {
+                const allButtons = document.querySelectorAll('[data-testid="stCameraInput"] button');
+                console.log('Found buttons:', allButtons.length);
+                allButtons.forEach((btn, idx) => {
+                    console.log(`Button ${idx}:`, {
+                        text: btn.textContent,
+                        ariaLabel: btn.getAttribute('aria-label'),
+                        title: btn.getAttribute('title'),
+                        hasIcon: btn.querySelector('svg') !== null,
+                        classes: btn.className
+                    });
+                });
+            };
+            
             const trySwitch = () => {
-                if (switched) return;
-                const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
+                if (attempts >= maxAttempts) return;
+                attempts++;
+                
+                debugButtons();
+                
+                // Find switch button - try multiple approaches
+                let switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
+                if (!switchBtn) switchBtn = document.querySelector('[data-testid="stCameraInput"] button[title*="Switch"]');
+                if (!switchBtn) {
+                    // Find button with SVG icon that's not the take photo button
+                    const buttons = document.querySelectorAll('[data-testid="stCameraInput"] button');
+                    for (let btn of buttons) {
+                        if (btn.querySelector('svg') && !btn.textContent.includes('Take')) {
+                            switchBtn = btn;
+                            break;
+                        }
+                    }
+                }
+                
                 if (switchBtn) {
-                    console.log('Auto-switching to back camera');
+                    console.log(`Attempt ${attempts}: Clicking switch camera button`);
                     switchBtn.click();
-                    switched = true;
+                    
+                    // Check if we need to click again (some devices need double click)
+                    setTimeout(() => {
+                        const video = document.querySelector('[data-testid="stCameraInput"] video');
+                        if (video && video.srcObject) {
+                            const tracks = video.srcObject.getVideoTracks();
+                            if (tracks.length > 0) {
+                                const settings = tracks[0].getSettings();
+                                if (settings.facingMode === 'user' && attempts < maxAttempts) {
+                                    console.log('Still front camera, clicking again');
+                                    switchBtn.click();
+                                }
+                            }
+                        }
+                    }, 500);
+                } else {
+                    // Button not found yet, try again
+                    setTimeout(trySwitch, 200);
                 }
             };
             
-            // Try multiple times
+            // Start trying immediately and with delays
+            setTimeout(trySwitch, 100);
             setTimeout(trySwitch, 500);
             setTimeout(trySwitch, 1000);
             setTimeout(trySwitch, 1500);
+            setTimeout(trySwitch, 2000);
+            
+            // Also try on video element appearance
+            const observer = new MutationObserver((mutations) => {
+                const video = document.querySelector('[data-testid="stCameraInput"] video');
+                if (video && attempts < maxAttempts) {
+                    trySwitch();
+                }
+            });
+            
+            const cameraContainer = document.querySelector('[data-testid="stCameraInput"]');
+            if (cameraContainer) {
+                observer.observe(cameraContainer, { childList: true, subtree: true });
+            }
         </script>
     """, unsafe_allow_html=True)
 
