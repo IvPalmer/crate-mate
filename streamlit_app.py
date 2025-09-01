@@ -157,6 +157,15 @@ if selected_file is not None:
                     grid_html_parts.append("</div>")
                     st.markdown("".join(grid_html_parts), unsafe_allow_html=True)
 
+                    # Confidence display (if provided by backend)
+                    conf = data.get("confidence")
+                    if conf is not None:
+                        try:
+                            conf_pct = f"{float(conf) * 100:.0f}%"
+                        except Exception:
+                            conf_pct = str(conf)
+                        st.markdown(f"**Confidence:** {conf_pct}")
+
                 # Market
                 low = data.get("lowest_price")
                 copies = data.get("num_for_sale")
@@ -208,17 +217,21 @@ if selected_file is not None:
 
                     st.markdown("\n".join(rows_html), unsafe_allow_html=True)
 
-                # Alternatives if low confidence
-                if data.get("confidence") and float(data["confidence"]) < 0.9:
+                # Alternatives if low confidence (expander for mobile visibility)
+                try:
+                    conf_val = float(data.get("confidence")) if data.get("confidence") is not None else None
+                except Exception:
+                    conf_val = None
+                if conf_val is not None and conf_val < 0.9:
                     alts = data.get("alternatives") or []
                     if alts:
-                        st.write("### Other possible matches")
-                        for alt in alts:
-                            a_title = f"{alt.get('artist','')} - {alt.get('title','')}"
-                            if alt.get("discogs"):
-                                st.markdown(f"- [{a_title}]({alt['discogs']})")
-                            else:
-                                st.write(f"- {a_title}")
+                        with st.expander("Other possible matches"):
+                            for alt in alts:
+                                a_title = f"{alt.get('artist','')} - {alt.get('title','')}"
+                                if alt.get("discogs"):
+                                    st.markdown(f"- [{a_title}]({alt['discogs']})")
+                                else:
+                                    st.write(f"- {a_title}")
             else:
                 try:
                     msg = resp.json()
