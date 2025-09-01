@@ -2,7 +2,7 @@ import os
 import requests
 import streamlit as st
 from io import BytesIO
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 st.set_page_config(page_title="Crate‑Mate", page_icon="🎚️", layout="wide")
@@ -22,35 +22,101 @@ st.caption("Scan a record cover and get links + tracklist")
 st.markdown(
     """
     <style>
+      /* General */
       .small-muted { color: #9aa0a6; font-size: 0.9rem; }
-      .link-badge a { padding: 4px 8px; border-radius: 6px; background: #1f2937; color: #e5e7eb !important; text-decoration: none; }
-      .link-badge a:hover { background: #374151; }
+
+      /* Top links grid */
+      .links-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 6px 0 16px; }
+      .links-grid a { display: block; text-align: center; padding: 8px 10px; border-radius: 8px; background: #1f2937; color: #e5e7eb !important; text-decoration: none; }
+      .links-grid a:hover { background: #374151; }
+
+      /* Tracklist rows */
+      .track-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+      .track-pos { width: 2.6rem; flex: 0 0 auto; font-weight: 600; opacity: 0.85; }
+      .track-main { flex: 1 1 auto; min-width: 0; }
+      .track-actions { flex: 0 0 auto; display: flex; gap: 8px; }
+      .track-actions a { padding: 4px 8px; border-radius: 6px; background: #1f2937; color: #e5e7eb !important; text-decoration: none; white-space: nowrap; }
+      .track-actions a:hover { background: #374151; }
+
+      /* Mobile tweaks */
+      @media (max-width: 640px) {
+        .links-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .track-pos { width: 2.2rem; }
+        .track-actions a { padding: 4px 6px; font-size: 0.9rem; }
+      }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "png", "webp"])
+camera_supported = hasattr(st, "camera_input")
 
-if uploaded is not None:
-    # Show preview
-    # Downscale large images client-side to reduce upload size (helps mobile)
+if camera_supported:
+    camera_tab, upload_tab = st.tabs(["Camera", "Upload file"])
+    with camera_tab:
+        camera_img = st.camera_input(
+            "Take a photo of the cover",
+            help="We will auto-crop a square around the center to focus on the cover"
+        )
+    with upload_tab:
+        uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "png", "webp"]) 
+else:
+    st.info("Camera capture not supported on this deployment or browser. Use file upload.")
+    camera_img = None
+    uploaded = st.file_uploader("Upload album cover image", type=["jpg", "jpeg", "png", "webp"]) 
+
+selected_file = camera_img or uploaded
+
+def _prepare_image_bytes(file_like) -> tuple[bytes, str]:
+    """Open, orient, optional square-crop, downscale and JPEG-encode the image.
+    Returns (bytes, filename).
+    """
     try:
-        img = Image.open(uploaded)
+        img = Image.open(file_like)
+        # Respect EXIF orientation
+        img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
+
+        # Always center square crop to minimize background noise
+        width, height = img.size
+        side = min(width, height)
+        left = (width - side) // 2
+        top = (height - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+
+        # Downscale large images to reduce upload size (helps mobile)
         max_dim = 1280
         w, h = img.size
         scale = min(1.0, max_dim / max(w, h))
         if scale < 1.0:
             new_size = (int(w * scale), int(h * scale))
             img = img.resize(new_size)
+
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=85)
         payload = buf.getvalue()
-        files = {"image": (uploaded.name or "upload.jpg", payload, "image/jpeg")}
+        filename = getattr(file_like, "name", "capture.jpg") or "capture.jpg"
+        return payload, filename
     except Exception:
-        # Fallback to raw upload if processing fails
-        files = {"image": (uploaded.name, uploaded.getvalue(), uploaded.type or "image/jpeg")}
+        # Fallback to pass-through bytes
+        raw = file_like.getvalue() if hasattr(file_like, "getvalue") else file_like.read()
+        filename = getattr(file_like, "name", "upload.jpg") or "upload.jpg"
+        return raw, filename
+
+if selected_file is not None:
+    # Show preview
+    # Downscale large images client-side to reduce upload size (helps mobile)
+    try:
+        payload, fname = _prepare_image_bytes(selected_file)
+        # Show what will be uploaded (already square-cropped if enabled)
+        try:
+            st.write("Cropped preview (square)")
+            st.image(Image.open(BytesIO(payload)), use_container_width=True)
+        except Exception:
+            pass
+        files = {"image": (fname, payload, "image/jpeg")}
+    except Exception:
+        files = {"image": (getattr(selected_file, "name", "upload.jpg"), selected_file.getvalue(), getattr(selected_file, "type", None) or "image/jpeg")}
 
     with st.spinner("Identifying…"):
         try:
@@ -79,19 +145,17 @@ if uploaded is not None:
                     youtube = links.get("youtube") or data.get("youtube_url")
                     bandcamp = links.get("bandcamp") or data.get("bandcamp_url")
 
-                    link_cols = st.columns(4)
-                    with link_cols[0]:
-                        if discogs and discogs != "unavailable":
-                            st.markdown(f"[View on Discogs]({discogs})")
-                    with link_cols[1]:
-                        if youtube and youtube != "unavailable":
-                            st.markdown(f"[YouTube]({youtube})")
-                    with link_cols[2]:
-                        if spotify and spotify != "unavailable":
-                            st.markdown(f"[Spotify]({spotify})")
-                    with link_cols[3]:
-                        if bandcamp:
-                            st.markdown(f"[Bandcamp]({bandcamp})")
+                    grid_html_parts = ["<div class='links-grid'>"]
+                    if discogs and discogs != "unavailable":
+                        grid_html_parts.append(f"<a href='{discogs}' target='_blank' rel='noopener'>View on Discogs</a>")
+                    if youtube and youtube != "unavailable":
+                        grid_html_parts.append(f"<a href='{youtube}' target='_blank' rel='noopener'>YouTube</a>")
+                    if spotify and spotify != "unavailable":
+                        grid_html_parts.append(f"<a href='{spotify}' target='_blank' rel='noopener'>Spotify</a>")
+                    if bandcamp:
+                        grid_html_parts.append(f"<a href='{bandcamp}' target='_blank' rel='noopener'>Bandcamp</a>")
+                    grid_html_parts.append("</div>")
+                    st.markdown("".join(grid_html_parts), unsafe_allow_html=True)
 
                 # Market
                 low = data.get("lowest_price")
@@ -109,6 +173,8 @@ if uploaded is not None:
                 tracks = (data.get("tracks") or {}).get("tracklist") or []
                 if tracks:
                     st.write("### Tracklist")
+                    from urllib.parse import quote_plus
+                    rows_html = []
                     for t in tracks:
                         pos = t.get("position", "")
                         name = t.get("title", "")
@@ -118,28 +184,29 @@ if uploaded is not None:
 
                         # Fallback search links when direct links are missing
                         if not yt and (artist_name or album_name) and name:
-                            from urllib.parse import quote_plus
                             q = quote_plus(f"{artist_name} {album_name} {name}")
                             yt = f"https://www.youtube.com/results?search_query={q}"
-                        if not sp and (artist_name) and name:
-                            from urllib.parse import quote_plus
+                        if not sp and artist_name and name:
                             q = quote_plus(f"{artist_name} {name}")
                             sp = f"https://open.spotify.com/search/{q}"
 
-                        c1, c2, c3 = st.columns([1,6,3])
-                        with c1:
-                            st.markdown(f"**{pos}**")
-                        with c2:
-                            main = f"{name}" + (f"  <span class='small-muted'>— {dur}</span>" if dur else "")
-                            st.markdown(main, unsafe_allow_html=True)
-                        with c3:
-                            links_html = []
-                            if yt:
-                                links_html.append(f"<span class='link-badge'><a href='{yt}' target='_blank'>YouTube</a></span>")
-                            if sp:
-                                links_html.append(f"<span class='link-badge' style='margin-left:6px'><a href='{sp}' target='_blank'>Spotify</a></span>")
-                            if links_html:
-                                st.markdown("".join(links_html), unsafe_allow_html=True)
+                        title_html = name + (f"  <span class='small-muted'>— {dur}</span>" if dur else "")
+                        actions_html = []
+                        if yt:
+                            actions_html.append(f"<a href='{yt}' target='_blank' rel='noopener'>YouTube</a>")
+                        if sp:
+                            actions_html.append(f"<a href='{sp}' target='_blank' rel='noopener'>Spotify</a>")
+
+                        row_html = f"""
+                        <div class='track-row'>
+                            <div class='track-pos'><strong>{pos}</strong></div>
+                            <div class='track-main'>{title_html}</div>
+                            <div class='track-actions'>{''.join(actions_html)}</div>
+                        </div>
+                        """
+                        rows_html.append(row_html)
+
+                    st.markdown("\n".join(rows_html), unsafe_allow_html=True)
 
                 # Alternatives if low confidence
                 if data.get("confidence") and float(data["confidence"]) < 0.9:
