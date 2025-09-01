@@ -55,13 +55,10 @@ st.markdown(
       [data-testid="stCameraInput"] canvas,
       [data-testid="stCameraInput"] img {
         width: 100% !important;
-        height: 100% !important;
+        height: auto !important;
+        aspect-ratio: 1 / 1 !important;
         object-fit: cover;
         border-radius: 8px;
-      }
-      /* Aggressive square enforcement for nested wrappers on Safari */
-      [data-testid="stCameraInput"] * {
-        aspect-ratio: 1 / 1 !important;
       }
       /* Hide the built-in switch camera tooltip/button */
       [aria-label="Switch camera"],
@@ -87,11 +84,14 @@ with btn_col2:
 
 camera_img = None
 if camera_supported and st.session_state.show_camera:
-    camera_img = st.camera_input(
-        "Take a photo of the cover",
-        help="We will auto-crop a square around the center to focus on the cover"
-    )
-    st.session_state.show_camera = False  # collapse after one capture intent
+    # Render camera inside a container to avoid layout glitches on iOS
+    cam_container = st.container()
+    with cam_container:
+        camera_img = st.camera_input(
+            "Take a photo of the cover",
+            help="We will auto-crop a square around the center to focus on the cover"
+        )
+    # Keep camera visible until a capture is made or user switches actions
 
 selected_file = camera_img or uploaded
 
