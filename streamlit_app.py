@@ -112,13 +112,26 @@ st.markdown(
         background: rgba(0, 0, 0, 0.8) !important;
       }
       
-      /* Take Photo button */
-      [data-testid="stCameraInput"] > button:last-of-type {
+      /* Take Photo button - force it outside and below the video container */
+      [data-testid="stCameraInput"] > button:not([aria-label*="Switch"]) {
+        position: relative !important;
         width: 100% !important;
         margin-top: 16px !important;
         padding: 12px !important;
         font-size: 16px !important;
         font-weight: 500 !important;
+        order: 10 !important;
+      }
+      
+      /* Ensure flex layout for proper button placement */
+      [data-testid="stCameraInput"] {
+        display: flex !important;
+        flex-direction: column !important;
+      }
+      
+      /* Camera container should not include the button */
+      [data-testid="stCameraInput"] > div:nth-child(2) {
+        order: 1 !important;
       }
     </style>
     """,
@@ -142,63 +155,100 @@ if camera_supported and st.session_state.show_camera:
     # Render camera inside a container to avoid layout glitches on iOS
     cam_container = st.container()
     with cam_container:
-        # JavaScript to force back camera and handle camera switching
+        # JavaScript to force back camera
         st.markdown(
             """
             <script>
-              // Override getUserMedia to prefer back camera
-              if (!window._cameraOverrideApplied) {
-                window._cameraOverrideApplied = true;
-                const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+              // Aggressive approach to force back camera
+              (function() {
+                let attemptCount = 0;
+                const maxAttempts = 10;
                 
-                navigator.mediaDevices.getUserMedia = function(constraints) {
-                  if (constraints && constraints.video && typeof constraints.video === 'object') {
-                    // Force back camera
-                    constraints.video.facingMode = { ideal: 'environment' };
-                  } else if (constraints && constraints.video === true) {
-                    constraints.video = { facingMode: { ideal: 'environment' } };
-                  }
-                  return originalGetUserMedia(constraints);
-                };
-              }
-              
-              // Also try to switch existing camera streams
-              setTimeout(() => {
-                const videos = document.querySelectorAll('[data-testid="stCameraInput"] video');
-                videos.forEach(video => {
-                  if (video.srcObject) {
-                    const tracks = video.srcObject.getTracks();
-                    tracks.forEach(track => track.stop());
-                    
-                    navigator.mediaDevices.getUserMedia({ 
-                      video: { facingMode: { exact: 'environment' } } 
-                    }).then(stream => {
-                      video.srcObject = stream;
-                    }).catch(() => {
-                      navigator.mediaDevices.getUserMedia({ 
-                        video: { facingMode: 'environment' } 
-                      }).then(stream => {
-                        video.srcObject = stream;
-                      });
+                // Function to switch to back camera
+                function switchToBackCamera() {
+                  attemptCount++;
+                  
+                  // Find all video elements
+                  const videos = document.querySelectorAll('[data-testid="stCameraInput"] video');
+                  
+                  if (videos.length > 0) {
+                    videos.forEach(video => {
+                      // Check if video has a stream
+                      if (video.srcObject) {
+                        // Get current video track settings
+                        const tracks = video.srcObject.getVideoTracks();
+                        if (tracks.length > 0) {
+                          const settings = tracks[0].getSettings();
+                          
+                          // Check if using front camera (facingMode might be 'user')
+                          if (!settings.facingMode || settings.facingMode === 'user') {
+                            // Stop current tracks
+                            tracks.forEach(track => track.stop());
+                            
+                            // Request back camera
+                            navigator.mediaDevices.getUserMedia({ 
+                              video: { 
+                                facingMode: { exact: 'environment' },
+                                width: { ideal: 1280 },
+                                height: { ideal: 1280 }
+                              } 
+                            }).then(stream => {
+                              video.srcObject = stream;
+                              console.log('Switched to back camera');
+                            }).catch(err => {
+                              // Try without exact constraint
+                              navigator.mediaDevices.getUserMedia({ 
+                                video: { 
+                                  facingMode: 'environment',
+                                  width: { ideal: 1280 },
+                                  height: { ideal: 1280 }
+                                } 
+                              }).then(stream => {
+                                video.srcObject = stream;
+                                console.log('Switched to back camera (fallback)');
+                              }).catch(err2 => {
+                                console.log('Could not switch to back camera:', err2);
+                                // As last resort, click the switch button
+                                const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
+                                if (switchBtn && attemptCount === 1) {
+                                  setTimeout(() => switchBtn.click(), 100);
+                                }
+                              });
+                            });
+                          }
+                        }
+                      } else if (attemptCount < maxAttempts) {
+                        // Video not ready, try again
+                        setTimeout(switchToBackCamera, 200);
+                      }
                     });
+                  } else if (attemptCount < maxAttempts) {
+                    // No video elements yet, try again
+                    setTimeout(switchToBackCamera, 200);
                   }
-                });
-              }, 500);
-              
-              // Click the switch camera button once if front camera is detected
-              setTimeout(() => {
-                const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
-                if (switchBtn) {
-                  // Check if we're on mobile and using front camera
-                  navigator.mediaDevices.enumerateDevices().then(devices => {
-                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                    if (videoDevices.length > 1) {
-                      // Likely has multiple cameras, click switch button once
-                      switchBtn.click();
-                    }
-                  });
                 }
-              }, 1000);
+                
+                // Start checking immediately and after delays
+                switchToBackCamera();
+                setTimeout(switchToBackCamera, 500);
+                setTimeout(switchToBackCamera, 1000);
+                
+                // Also override getUserMedia for future calls
+                if (!window._backCameraOverride) {
+                  window._backCameraOverride = true;
+                  const original = navigator.mediaDevices.getUserMedia;
+                  navigator.mediaDevices.getUserMedia = function(constraints) {
+                    if (constraints && constraints.video) {
+                      if (typeof constraints.video === 'object') {
+                        constraints.video.facingMode = 'environment';
+                      } else {
+                        constraints.video = { facingMode: 'environment' };
+                      }
+                    }
+                    return original.call(this, constraints);
+                  };
+                }
+              })();
             </script>
             """,
             unsafe_allow_html=True,
