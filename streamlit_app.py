@@ -44,76 +44,6 @@ st.markdown(
         .track-pos { width: 2.2rem; }
         .track-actions a { padding: 4px 6px; font-size: 0.9rem; }
       }
-
-      /* Square camera preview container */
-      [data-testid="stCameraInput"] {
-        max-width: 500px;
-        margin: 0 auto;
-        position: relative;
-      }
-      
-      /* Create a wrapper for the video that's square */
-      [data-testid="stCameraInput"] > div:nth-child(2) {
-        position: relative !important;
-        width: 100% !important;
-        padding-bottom: 100% !important;
-        height: 0 !important;
-        overflow: hidden !important;  /* Changed back to hidden to contain video */
-        border-radius: 12px !important;
-        background: #000 !important;
-        margin-bottom: 70px !important;  /* Add space for button below */
-      }
-      
-      /* Video element - absolute within square container */
-      [data-testid="stCameraInput"] video,
-      [data-testid="stCameraInput"] canvas {
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        object-fit: cover !important;
-        border-radius: 12px !important;
-      }
-      
-      /* Take Photo button - position below video container */
-      [data-testid="stCameraInput"] button:not([aria-label*="Switch"]) {
-        position: relative !important;
-        display: block !important;
-        width: 100% !important;
-        margin: -50px 0 0 0 !important;  /* Negative margin to pull up closer to video */
-        padding: 12px !important;
-        font-size: 16px !important;
-        font-weight: 500 !important;
-        z-index: 10 !important;
-      }
-      
-      /* Hide tooltip text */
-      [data-testid="stTooltipHoverTarget"] span {
-        display: none !important;
-      }
-      
-      /* Switch camera button */
-      [data-testid="stCameraInput"] button[aria-label*="Switch"] {
-        position: absolute !important;
-        top: 16px !important;  /* Moved down slightly to avoid cutoff */
-        right: 16px !important;  /* Moved left slightly to avoid cutoff */
-        z-index: 100 !important;
-        background: rgba(0, 0, 0, 0.6) !important;
-        border: none !important;
-        border-radius: 50% !important;
-        width: 40px !important;  /* Slightly smaller to fit better */
-        height: 40px !important;
-        padding: 0 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-      }
-      
-      /* Force button text to be visible */
-      [data-testid="stCameraInput"] button:not([aria-label*="Switch"]) p {
-        margin: 0 !important;
-      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -133,189 +63,125 @@ with btn_col2:
 
 camera_img = None
 if camera_supported and st.session_state.show_camera:
-    # Render camera inside a container to avoid layout glitches on iOS
-    cam_container = st.container()
-    with cam_container:
-        # JavaScript to force back camera
-        st.markdown(
-            """
-            <script>
-              // Aggressive approach to force back camera
-              (function() {
-                let attemptCount = 0;
-                const maxAttempts = 10;
-                
-                // Function to switch to back camera
-                function switchToBackCamera() {
-                  attemptCount++;
-                  
-                  // Find all video elements
-                  const videos = document.querySelectorAll('[data-testid="stCameraInput"] video');
-                  
-                  if (videos.length > 0) {
-                    videos.forEach(video => {
-                      // Check if video has a stream
-                      if (video.srcObject) {
-                        // Get current video track settings
-                        const tracks = video.srcObject.getVideoTracks();
-                        if (tracks.length > 0) {
-                          const settings = tracks[0].getSettings();
-                          
-                          // Always try to switch on first attempt
-                          if (attemptCount === 1) {
-                            // Just click the switch button immediately
-                            const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
-                            if (switchBtn) {
-                              console.log('Clicking switch camera button');
-                              setTimeout(() => {
-                                switchBtn.click();
-                                // Check again after switch
-                                setTimeout(() => {
-                                  const newTracks = video.srcObject?.getVideoTracks();
-                                  if (newTracks && newTracks.length > 0) {
-                                    const newSettings = newTracks[0].getSettings();
-                                    if (newSettings.facingMode === 'user') {
-                                      // Still front camera, click again
-                                      switchBtn.click();
-                                    }
-                                  }
-                                }, 500);
-                              }, 300);
+    # Complete CSS override for camera
+    st.markdown("""
+        <style>
+            /* Force camera container layout */
+            section[data-testid="stHorizontalBlock"]:has([data-testid="stCameraInput"]) {
+                max-width: 500px !important;
+                margin: 0 auto !important;
+            }
+            
+            /* Camera input wrapper */
+            [data-testid="stCameraInput"] {
+                display: block !important;
+                width: 100% !important;
+            }
+            
+            /* Video container - force square */
+            [data-testid="stCameraInput"] > div:has(video) {
+                position: relative !important;
+                width: 100% !important;
+                height: 0 !important;
+                padding-bottom: 100% !important;
+                background: #000 !important;
+                border-radius: 12px !important;
+                overflow: hidden !important;
+                margin: 0 !important;
+            }
+            
+            /* Video/canvas positioning */
+            [data-testid="stCameraInput"] video,
+            [data-testid="stCameraInput"] canvas {
+                position: absolute !important;
+                top: 50% !important;
+                left: 50% !important;
+                transform: translate(-50%, -50%) !important;
+                min-width: 100% !important;
+                min-height: 100% !important;
+                width: auto !important;
+                height: auto !important;
+                object-fit: cover !important;
+            }
+            
+            /* Hide all buttons initially */
+            [data-testid="stCameraInput"] button {
+                display: none !important;
+            }
+            
+            /* Show and position switch camera button */
+            [data-testid="stCameraInput"] button[aria-label*="Switch"] {
+                display: flex !important;
+                position: absolute !important;
+                top: 15px !important;
+                right: 15px !important;
+                width: 40px !important;
+                height: 40px !important;
+                background: rgba(0, 0, 0, 0.5) !important;
+                border: none !important;
+                border-radius: 50% !important;
+                align-items: center !important;
+                justify-content: center !important;
+                cursor: pointer !important;
+                z-index: 100 !important;
+            }
+            
+            /* Tooltip */
+            [data-testid="stTooltipContent"] {
+                display: none !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Create container for camera
+    with st.container():
+        camera_col1, camera_col2, camera_col3 = st.columns([1, 8, 1])
+        with camera_col2:
+            camera_img = st.camera_input(
+                "Camera",
+                label_visibility="collapsed",
+                key="camera_widget"
+            )
+    
+    # Add Take Photo button separately below
+    if camera_img is None:
+        button_col1, button_col2, button_col3 = st.columns([1, 8, 1])
+        with button_col2:
+            if st.button("Take Photo", key="custom_take_photo", use_container_width=True):
+                # This will trigger the camera to take a photo programmatically
+                st.markdown("""
+                    <script>
+                        // Find and click the hidden Take Photo button
+                        const buttons = document.querySelectorAll('[data-testid="stCameraInput"] button');
+                        buttons.forEach(btn => {
+                            if (btn.textContent && btn.textContent.includes('Take Photo')) {
+                                btn.click();
                             }
-                          } else if (!settings.facingMode || settings.facingMode === 'user') {
-                            // Try programmatic switch as backup
-                            tracks.forEach(track => track.stop());
-                            
-                            navigator.mediaDevices.getUserMedia({ 
-                              video: { 
-                                facingMode: { exact: 'environment' },
-                                width: { ideal: 1280 },
-                                height: { ideal: 1280 }
-                              } 
-                            }).then(stream => {
-                              video.srcObject = stream;
-                              console.log('Switched to back camera programmatically');
-                            }).catch(err => {
-                              navigator.mediaDevices.getUserMedia({ 
-                                video: { 
-                                  facingMode: 'environment',
-                                  width: { ideal: 1280 },
-                                  height: { ideal: 1280 }
-                                } 
-                              }).then(stream => {
-                                video.srcObject = stream;
-                              }).catch(err2 => {
-                                console.log('Could not switch cameras:', err2);
-                              });
-                            });
-                          }
-                        }
-                      } else if (attemptCount < maxAttempts) {
-                        // Video not ready, try again
-                        setTimeout(switchToBackCamera, 200);
-                      }
-                    });
-                  } else if (attemptCount < maxAttempts) {
-                    // No video elements yet, try again
-                    setTimeout(switchToBackCamera, 200);
-                  }
+                        });
+                    </script>
+                """, unsafe_allow_html=True)
+    
+    # Auto-switch to back camera
+    st.markdown("""
+        <script>
+            // Auto-switch to back camera after delay
+            let switched = false;
+            const trySwitch = () => {
+                if (switched) return;
+                const switchBtn = document.querySelector('[data-testid="stCameraInput"] button[aria-label*="Switch"]');
+                if (switchBtn) {
+                    console.log('Auto-switching to back camera');
+                    switchBtn.click();
+                    switched = true;
                 }
-                
-                // Start checking immediately and after delays
-                switchToBackCamera();
-                setTimeout(switchToBackCamera, 500);
-                setTimeout(switchToBackCamera, 1000);
-                
-                // Also override getUserMedia for future calls
-                if (!window._backCameraOverride) {
-                  window._backCameraOverride = true;
-                  const original = navigator.mediaDevices.getUserMedia;
-                  navigator.mediaDevices.getUserMedia = function(constraints) {
-                    if (constraints && constraints.video) {
-                      if (typeof constraints.video === 'object') {
-                        constraints.video.facingMode = 'environment';
-                      } else {
-                        constraints.video = { facingMode: 'environment' };
-                      }
-                    }
-                    return original.call(this, constraints);
-                  };
-                }
-              })();
-              
-              // Debug and fix button placement
-              function debugCameraStructure() {
-                const cameraInput = document.querySelector('[data-testid="stCameraInput"]');
-                if (!cameraInput) return;
-                
-                console.log('Camera structure:', cameraInput);
-                
-                // Find all buttons
-                const buttons = cameraInput.querySelectorAll('button');
-                buttons.forEach((btn, idx) => {
-                  console.log(`Button ${idx}:`, btn.textContent, btn.getAttribute('aria-label'), btn);
-                  
-                  // If this is the Take Photo button
-                  if (btn.textContent?.includes('Take Photo') && !btn.getAttribute('aria-label')?.includes('Switch')) {
-                    // Force absolute positioning via style attribute (highest specificity)
-                    btn.style.cssText = `
-                      position: relative !important;
-                      top: auto !important;
-                      left: 0 !important;
-                      right: 0 !important;
-                      width: 100% !important;
-                      margin: 16px 0 0 0 !important;
-                      padding: 12px !important;
-                      font-size: 16px !important;
-                      font-weight: 500 !important;
-                      z-index: 10 !important;
-                      background-color: #0068c9 !important;
-                      color: white !important;
-                      border: none !important;
-                      border-radius: 4px !important;
-                      cursor: pointer !important;
-                      display: block !important;
-                    `;
-                  }
-                });
-                
-                // Ensure camera input has proper height
-                cameraInput.style.paddingBottom = '60px';
-              }
-              
-              // Run multiple times as DOM updates
-              debugCameraStructure();
-              setTimeout(debugCameraStructure, 100);
-              setTimeout(debugCameraStructure, 300);
-              setTimeout(debugCameraStructure, 500);
-              setTimeout(debugCameraStructure, 1000);
-              
-              // Watch for any changes
-              const observer = new MutationObserver(() => {
-                debugCameraStructure();
-              });
-              
-              setTimeout(() => {
-                const cameraContainer = document.querySelector('[data-testid="stCameraInput"]');
-                if (cameraContainer) {
-                  observer.observe(cameraContainer, { 
-                    childList: true, 
-                    subtree: true,
-                    attributes: true,
-                    attributeFilter: ['style']
-                  });
-                }
-              }, 500);
-            </script>
-            """,
-            unsafe_allow_html=True,
-        )
-        camera_img = st.camera_input(
-            "Take a photo of the cover",
-            help="We will auto-crop a square around the center to focus on the cover",
-            label_visibility="collapsed"  # Hide the label to reduce clutter
-        )
-    # Keep camera visible until a capture is made or user switches actions
+            };
+            
+            // Try multiple times
+            setTimeout(trySwitch, 500);
+            setTimeout(trySwitch, 1000);
+            setTimeout(trySwitch, 1500);
+        </script>
+    """, unsafe_allow_html=True)
 
 selected_file = camera_img or uploaded
 
