@@ -3,6 +3,8 @@ import requests
 import streamlit as st
 from io import BytesIO
 from PIL import Image, ImageOps
+import cv2
+import numpy as np
 
 
 st.set_page_config(page_title="Crate‑Mate", page_icon="🎚️", layout="wide")
@@ -49,53 +51,106 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-camera_supported = hasattr(st, "camera_input")
+st.markdown("""
+📸 **How to use:**
+1. Take a photo of your record with your phone's camera
+2. Upload the photo below
+3. We'll automatically detect and crop the record cover
+""")
 
-if "show_camera" not in st.session_state:
-    st.session_state.show_camera = False
+uploaded = st.file_uploader(
+    "Upload a photo of your record", 
+    type=["jpg", "jpeg", "png", "webp"],
+    help="Take a photo with your camera app, then upload it here"
+)
 
-btn_col1, btn_col2 = st.columns(2)
-with btn_col1:
-    if camera_supported and st.button("Use camera", use_container_width=True):
-        st.session_state.show_camera = True
-with btn_col2:
-    uploaded = st.file_uploader("Upload image", type=["jpg", "jpeg", "png", "webp"], label_visibility="visible")
+selected_file = uploaded
 
-camera_img = None
-if camera_supported and st.session_state.show_camera:
-    # Simple CSS for square camera preview - nothing fancy
-    st.markdown("""
-        <style>
-            /* Center the camera and make it reasonably sized */
-            [data-testid="stCameraInput"] {
-                max-width: 500px;
-                margin: 0 auto;
-                display: block;
-            }
-            
-            /* Make the video preview square-ish */
-            [data-testid="stCameraInput"] video {
-                aspect-ratio: 1 / 1;
-                object-fit: cover;
-                border-radius: 8px;
-                width: 100%;
-                height: auto;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+def detect_record_cover(img):
+    """Detect and extract the record cover from an image using OpenCV."""
+    # Convert PIL image to OpenCV format
+    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    original = img_cv.copy()
     
-    # Just use the standard camera input - simple and reliable
-    st.info("📸 Take a photo of the record cover")
-    camera_img = st.camera_input(
-        "Take a photo", 
-        label_visibility="collapsed",
-        help="If front camera opens, use the switch camera button"
-    )
+    # Convert to grayscale
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    
+    # Apply bilateral filter to reduce noise while keeping edges sharp
+    gray = cv2.bilateralFilter(gray, 11, 17, 17)
+    
+    # Edge detection
+    edges = cv2.Canny(gray, 30, 200)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Sort contours by area and keep the largest ones
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
+    
+    # Look for a square/rectangular contour
+    record_contour = None
+    for contour in contours:
+        # Approximate the contour
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+        
+        # If the approximated contour has 4 points, it's likely a rectangle
+        if len(approx) == 4:
+            # Check if it's roughly square (aspect ratio close to 1)
+            x, y, w, h = cv2.boundingRect(approx)
+            aspect_ratio = float(w) / h
+            if 0.7 < aspect_ratio < 1.3:  # Allow some tolerance for perspective
+                record_contour = approx
+                break
+    
+    if record_contour is not None:
+        # Order the points for perspective transform
+        pts = record_contour.reshape(4, 2)
+        rect = np.zeros((4, 2), dtype="float32")
+        
+        # Find the top-left, top-right, bottom-right, and bottom-left points
+        s = pts.sum(axis=1)
+        rect[0] = pts[np.argmin(s)]  # Top-left
+        rect[2] = pts[np.argmax(s)]  # Bottom-right
+        
+        diff = np.diff(pts, axis=1)
+        rect[1] = pts[np.argmin(diff)]  # Top-right
+        rect[3] = pts[np.argmax(diff)]  # Bottom-left
+        
+        # Compute the width and height of the new image
+        (tl, tr, br, bl) = rect
+        width_a = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+        width_b = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+        max_width = max(int(width_a), int(width_b))
+        
+        height_a = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        height_b = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        max_height = max(int(height_a), int(height_b))
+        
+        # Make it square
+        max_dim = max(max_width, max_height)
+        
+        # Destination points for the transform
+        dst = np.array([
+            [0, 0],
+            [max_dim - 1, 0],
+            [max_dim - 1, max_dim - 1],
+            [0, max_dim - 1]], dtype="float32")
+        
+        # Apply perspective transform
+        M = cv2.getPerspectiveTransform(rect, dst)
+        warped = cv2.warpPerspective(original, M, (max_dim, max_dim))
+        
+        # Convert back to PIL Image
+        warped_rgb = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(warped_rgb)
+    
+    # If no record detected, return None
+    return None
 
-selected_file = camera_img or uploaded
 
 def _prepare_image_bytes(file_like) -> tuple[bytes, str]:
-    """Open, orient, optional square-crop, downscale and JPEG-encode the image.
+    """Open, orient, detect record cover, square-crop, downscale and JPEG-encode the image.
     Returns (bytes, filename).
     """
     try:
@@ -104,12 +159,20 @@ def _prepare_image_bytes(file_like) -> tuple[bytes, str]:
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
 
-        # Always center square crop to minimize background noise
-        width, height = img.size
-        side = min(width, height)
-        left = (width - side) // 2
-        top = (height - side) // 2
-        img = img.crop((left, top, left + side, top + side))
+        # Try to detect and extract the record cover
+        detected_record = detect_record_cover(img)
+        
+        if detected_record is not None:
+            img = detected_record
+            st.success("✅ Record cover detected and extracted!")
+        else:
+            # Fallback to center square crop if detection fails
+            st.info("📷 Using center crop (tip: try to fill the frame with the record)")
+            width, height = img.size
+            side = min(width, height)
+            left = (width - side) // 2
+            top = (height - side) // 2
+            img = img.crop((left, top, left + side, top + side))
 
         # Downscale large images to reduce upload size (helps mobile)
         max_dim = 1280
@@ -117,29 +180,39 @@ def _prepare_image_bytes(file_like) -> tuple[bytes, str]:
         scale = min(1.0, max_dim / max(w, h))
         if scale < 1.0:
             new_size = (int(w * scale), int(h * scale))
-            img = img.resize(new_size)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
 
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=85)
         payload = buf.getvalue()
         filename = getattr(file_like, "name", "capture.jpg") or "capture.jpg"
         return payload, filename
-    except Exception:
+    except Exception as e:
+        st.warning(f"Image processing error: {str(e)}. Using original image.")
         # Fallback to pass-through bytes
+        file_like.seek(0) if hasattr(file_like, 'seek') else None
         raw = file_like.getvalue() if hasattr(file_like, "getvalue") else file_like.read()
         filename = getattr(file_like, "name", "upload.jpg") or "upload.jpg"
         return raw, filename
 
 if selected_file is not None:
-    # Show preview
-    # Downscale large images client-side to reduce upload size (helps mobile)
-    try:
-        payload, fname = _prepare_image_bytes(selected_file)
-        # Show what will be uploaded (already square-cropped if enabled)
-        # No explicit preview to avoid large scroll on mobile
-        files = {"image": (fname, payload, "image/jpeg")}
-    except Exception:
-        files = {"image": (getattr(selected_file, "name", "upload.jpg"), selected_file.getvalue(), getattr(selected_file, "type", None) or "image/jpeg")}
+    # Process and show preview
+    with st.spinner("Processing image..."):
+        try:
+            # Process the image
+            payload, fname = _prepare_image_bytes(selected_file)
+            
+            # Show preview of what will be sent
+            st.write("### Preview")
+            preview_img = Image.open(BytesIO(payload))
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(preview_img, caption="Processed image (square cropped)", use_container_width=True)
+            
+            files = {"image": (fname, payload, "image/jpeg")}
+        except Exception as e:
+            st.error(f"Error processing image: {str(e)}")
+            files = {"image": (getattr(selected_file, "name", "upload.jpg"), selected_file.getvalue(), getattr(selected_file, "type", None) or "image/jpeg")}
 
     with st.spinner("Identifying…"):
         try:
