@@ -1,0 +1,19 @@
+[
+  {
+    "name": "keep-recent-versions",
+    "action": { "type": "KEEP" },
+    "mostRecentVersions": { "keepCount": 2 }
+  },
+  {
+    "name": "delete-untagged",
+    "action": { "type": "DELETE" },
+    "condition": { "olderThan": "1d", "tagState": "UNTAGGED" }
+  },
+  {
+    "name": "delete-old-tagged",
+    "action": { "type": "DELETE" },
+    "condition": { "olderThan": "7d", "tagState": "ANY" }
+  }
+]
+
+
