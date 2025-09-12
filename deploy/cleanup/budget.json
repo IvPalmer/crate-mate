@@ -1,0 +1,25 @@
+{
+  "displayName": "Crate-Mate Monthly Budget",
+  "budgetFilter": {
+    "projects": [
+      "projects/neural-quarter-470623-r2"
+    ]
+  },
+  "amount": {
+    "specifiedAmount": {
+      "currencyCode": "BRL",
+      "units": "25"
+    }
+  },
+  "thresholdRules": [
+    { "thresholdPercent": 0.5 },
+    { "thresholdPercent": 0.75 },
+    { "thresholdPercent": 1.0 }
+  ],
+  "allUpdatesRule": {
+    "disableDefaultIamRecipients": false
+  }
+}
+
+
+

@@ -53,13 +53,13 @@ gcloud run deploy "${SERVICE}" \
   --platform managed \
   --allow-unauthenticated \
   --port 8000 \
-  --memory 1Gi \
-  --cpu 1 \
-  --concurrency 1 \
-  --min-instances 1 \
-  --max-instances 2 \
-  --timeout 600 \
-  --cpu-boost \
+  --memory 512Mi \
+  --cpu 0.5 \
+  --concurrency 40 \
+  --min-instances 0 \
+  --max-instances 4 \
+  --timeout 180 \
+  --no-cpu-boost \
   --set-env-vars DISCOGS_TOKEN="${DISCOGS_TOKEN}",SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}",SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}",GEMINI_API_KEY="${GEMINI_API_KEY}",YOUTUBE_API_KEY="${YOUTUBE_API_KEY}",ALLOWED_ORIGINS="${ALLOWED_ORIGINS}",ENABLE_UNIVERSAL="${ENABLE_UNIVERSAL}"
 
 echo "Environment variables applied during deploy."
