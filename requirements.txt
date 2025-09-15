@@ -1,6 +1,12 @@
-streamlit>=1.28.0
+streamlit
 pillow
 requests
-opencv-python-headless>=4.8.0
-numpy>=1.24.0
-
+google-generativeai
+discogs-client
+spotipy
+beautifulsoup4
+lxml
+aiohttp
+fuzzywuzzy
+python-Levenshtein
+pytesseract
