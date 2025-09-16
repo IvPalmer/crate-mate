@@ -14,11 +14,26 @@ class DiscogsCollector(MetadataCollector):
         self.client = None
         if os.getenv("DISCOGS_TOKEN"):
             try:
+                import tempfile
+                # Use a temporary directory for cache to avoid permission issues
+                temp_dir = tempfile.gettempdir()
+                cache_dir = os.path.join(temp_dir, "discogs_cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                
                 self.client = discogs_client.Client(
-                    "CrateMate/1.0", user_token=os.getenv("DISCOGS_TOKEN")
+                    "CrateMate/1.0", 
+                    user_token=os.getenv("DISCOGS_TOKEN")
                 )
             except Exception as e:
                 self.logger.error(f"Failed to initialize Discogs client: {e}")
+                # Try without cache if there are permission issues
+                try:
+                    self.client = discogs_client.Client(
+                        "CrateMate/1.0", 
+                        user_token=os.getenv("DISCOGS_TOKEN")
+                    )
+                except Exception as e2:
+                    self.logger.error(f"Failed to initialize Discogs client without cache: {e2}")
 
     def search_release(self, query: str):
         if not self.client:

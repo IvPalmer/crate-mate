@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 import spotipy  # https://github.com/spotipy-dev/spotipy?tab=readme-ov-file
 from spotipy.oauth2 import SpotifyClientCredentials
-from app.collectors.base import MetadataCollector
+from .base import MetadataCollector
 
 
 load_dotenv()
@@ -23,15 +23,37 @@ class SpotifyCollector(MetadataCollector):
     https://developer.spotify.com/documentation/web-api
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name="spotify"):
         super().__init__(name)
         self.logger.info("Initializing SpotifyCollector")
 
-        self.client = spotipy.Spotify(
-            auth_manager=SpotifyClientCredentials(
-                client_id=CLIENT_ID, client_secret=CLIENT_SECRET
+        try:
+            import tempfile
+            # Use a temporary directory for cache to avoid permission issues
+            temp_dir = tempfile.gettempdir()
+            cache_path = os.path.join(temp_dir, ".spotify_cache")
+            
+            self.client = spotipy.Spotify(
+                auth_manager=SpotifyClientCredentials(
+                    client_id=CLIENT_ID, 
+                    client_secret=CLIENT_SECRET,
+                    cache_path=cache_path
+                )
             )
-        )
+        except Exception as e:
+            self.logger.warning(f"Failed to set custom cache path: {e}")
+            # Fall back to default (may show warnings)
+            try:
+                self.client = spotipy.Spotify(
+                    auth_manager=SpotifyClientCredentials(
+                        client_id=CLIENT_ID, 
+                        client_secret=CLIENT_SECRET
+                    )
+                )
+            except Exception as e2:
+                self.logger.error(f"Failed to initialize Spotify client: {e2}")
+                self.client = None
+                
         self.logger.info("Spotify client initialized")
         self.executor = ThreadPoolExecutor(max_workers=5)
 
@@ -64,6 +86,10 @@ class SpotifyCollector(MetadataCollector):
         - CancelledError: If the coroutine is cancelled.
         """
         self.logger.info("Fetching Spotify details for artist: %s", artist_name)
+        
+        if not self.client:
+            self.logger.error("Spotify client not initialized")
+            return {"error": "Spotify client not initialized"}
 
         loop = asyncio.get_event_loop()
         try:
@@ -137,6 +163,10 @@ class SpotifyCollector(MetadataCollector):
         self.logger.info(
             "Fetching Spotify album: '%s' by artist: '%s'", album_name, artist_name
         )
+        
+        if not self.client:
+            self.logger.error("Spotify client not initialized")
+            return {"error": "Spotify client not initialized"}
 
         loop = asyncio.get_event_loop()
         try:

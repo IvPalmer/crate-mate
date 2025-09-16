@@ -65,11 +65,30 @@ def load_collectors():
     except Exception as e:
         st.sidebar.error(f"Spotify: {e}")
     
+    # YouTube integration - use hosted-friendly collector
     try:
-        from youtube_enhanced import YouTubeEnhancedSearch
-        collectors['youtube'] = YouTubeEnhancedSearch()
+        from youtube_hosted import YouTubeHostedSearch
+        collectors['youtube'] = YouTubeHostedSearch()
+        st.sidebar.success("YouTube: Smart search links enabled")
     except Exception as e:
         st.sidebar.error(f"YouTube: {e}")
+        # Fallback to enhanced search
+        try:
+            from youtube_enhanced import YouTubeEnhancedSearch
+            collectors['youtube'] = YouTubeEnhancedSearch()
+            st.sidebar.info("YouTube: Basic search links enabled")
+        except Exception as e2:
+            st.sidebar.error(f"YouTube fallback failed: {e2}")
+    
+    # Try to enable direct video access (works in local/unrestricted environments)
+    try:
+        from youtube_ytdlp import YouTubeYtdlpSearch
+        ytdlp_collector = YouTubeYtdlpSearch()
+        if ytdlp_collector.ytdlp_available:
+            collectors['youtube_direct'] = ytdlp_collector
+            st.sidebar.success("YouTube: Direct video links available (yt-dlp)")
+    except Exception:
+        pass  # Silent fail - this is expected in hosted environments
     
     try:
         from bandcamp import BandcampCollector
@@ -147,15 +166,37 @@ async def perform_search(image: Image.Image, collectors: Dict) -> Dict:
         discogs_details = results.get('discogs', {}).get('details', {})
         spotify_data = results.get('spotify', {}).get('result', {})
         
-        # Get tracklist and enhance with YouTube
+        # Get tracklist and enhance with YouTube links
         tracklist = discogs_details.get('tracklist', [])
-        if tracklist and 'youtube' in collectors:
-            try:
-                enhanced_tracks = collectors['youtube'].generate_track_links(artist, album, tracklist)
-                tracklist = enhanced_tracks
-            except Exception:
-                pass
+        if tracklist:
+            # Try direct video links first (if available)
+            if 'youtube_direct' in collectors:
+                try:
+                    enhanced_tracks = collectors['youtube_direct'].get_track_videos(artist, album, tracklist)
+                    tracklist = enhanced_tracks
+                except Exception as e:
+                    print(f"YouTube direct search failed: {e}")
+                    # Fall back to enhanced search
+                    if 'youtube' in collectors:
+                        try:
+                            enhanced_tracks = collectors['youtube'].generate_track_links(artist, album, tracklist)
+                            tracklist = enhanced_tracks
+                        except Exception as e2:
+                            print(f"YouTube enhanced search failed: {e2}")
+            elif 'youtube' in collectors:
+                # Use enhanced search (search links)
+                try:
+                    enhanced_tracks = collectors['youtube'].generate_track_links(artist, album, tracklist)
+                    tracklist = enhanced_tracks
+                except Exception as e:
+                    print(f"YouTube search failed: {e}")
         
+        # Build Discogs URL if release details exist
+        discogs_url = None
+        if discogs_details and results.get('discogs', {}).get('results'):
+            first_result = results['discogs']['results'][0]
+            discogs_url = f"https://www.discogs.com{first_result.get('uri', '')}"
+
         final_result = {
             "success": True,
             "identification": {
@@ -166,20 +207,22 @@ async def perform_search(image: Image.Image, collectors: Dict) -> Dict:
             "album": {
                 "artist": artist,
                 "title": album,
-                "cover_image": discogs_details.get("cover_image"),
-                "year": discogs_details.get("year"),
-                "genres": discogs_details.get("genres", []),
-                "styles": discogs_details.get("styles", [])
+                "cover_image": discogs_details.get("cover_image") if discogs_details else None,
+                "year": discogs_details.get("year") if discogs_details else None,
+                "genres": discogs_details.get("genres", []) if discogs_details else [],
+                "styles": discogs_details.get("styles", []) if discogs_details else [],
+                "labels": discogs_details.get("labels", []) if discogs_details else []
             },
             "links": {
-                "discogs": discogs_details.get("discogs_url"),
+                "discogs": discogs_url,
                 "spotify": spotify_data.get("url"),
-                "youtube": discogs_details.get("youtube_url"),
+                "youtube": discogs_details.get("youtube_url") if discogs_details else None,
                 "bandcamp": results.get("bandcamp", {}).get("link")
             },
             "tracks": tracklist,
-            "price_info": discogs_details.get("price_info", {}),
-            "market_stats": discogs_details.get("market_stats", {})
+            "price_info": discogs_details.get("price_info", {}) if discogs_details else {},
+            "market_stats": discogs_details.get("market_stats", {}) if discogs_details else {},
+            "release_overview": discogs_details.get("release_overview", {}) if discogs_details else {}
         }
         
         return final_result
@@ -198,7 +241,9 @@ def display_result(result: Dict):
     album_info = result.get("album", {})
     links = result.get("links", {})
     tracks = result.get("tracks", [])
+    price_info = result.get("price_info", {})
     market_stats = result.get("market_stats", {})
+    release_overview = result.get("release_overview", {})
     
     # Album info
     col1, col2 = st.columns([1, 2])
@@ -222,6 +267,13 @@ def display_result(result: Dict):
         
         if album_info.get("genres"):
             st.write(f"🎭 Genres: {', '.join(album_info['genres'])}")
+        
+        if album_info.get("styles"):
+            st.write(f"🎨 Styles: {', '.join(album_info['styles'])}")
+        
+        if album_info.get("labels"):
+            labels = [label.get('name', label) if isinstance(label, dict) else str(label) for label in album_info['labels']]
+            st.write(f"🏷️ Label: {', '.join(labels)}")
         
         confidence = identification.get("confidence", 0)
         if confidence >= 90:
@@ -259,18 +311,63 @@ def display_result(result: Dict):
         else:
             st.write("🎪 Bandcamp: Unavailable")
     
-    # Market info
-    if market_stats:
+    # Market info - combine data from multiple sources
+    has_market_data = bool(price_info or market_stats or release_overview)
+    
+    if has_market_data:
         st.markdown("### 💰 Market Information")
-        market_cols = st.columns(2)
+        market_cols = st.columns(3)
+        
+        # Get price data from various sources
+        lowest_price = (
+            market_stats.get("lowest_price") or 
+            release_overview.get("lowest_price") or 
+            (price_info.get("price_by_condition", {}).get("Good (G)", {}).get("value") if price_info else None)
+        )
+        
+        avg_price = price_info.get("average_price") if price_info else None
+        currency = (
+            market_stats.get("currency") or 
+            release_overview.get("currency") or 
+            price_info.get("currency", "USD")
+        )
+        
+        num_for_sale = (
+            market_stats.get("num_for_sale") or 
+            release_overview.get("num_for_sale")
+        )
+        
+        median_price = market_stats.get("median_price")
         
         with market_cols[0]:
-            if market_stats.get("lowest_price"):
-                st.metric("Lowest Price", f"${market_stats['lowest_price']}")
+            if lowest_price:
+                st.metric("💸 Lowest Price", f"{currency} {lowest_price}")
         
         with market_cols[1]:
-            if market_stats.get("num_for_sale"):
-                st.metric("For Sale", f"{market_stats['num_for_sale']} copies")
+            if avg_price:
+                st.metric("📊 Average Price", f"{currency} {avg_price}")
+            elif median_price:
+                st.metric("📊 Median Price", f"{currency} {median_price}")
+        
+        with market_cols[2]:
+            if num_for_sale:
+                st.metric("🏪 Available", f"{num_for_sale} copies")
+        
+        # Show price breakdown if available
+        if price_info and price_info.get("price_by_condition"):
+            st.markdown("#### 📋 Price by Condition")
+            condition_cols = st.columns(len(price_info["price_by_condition"]))
+            
+            for i, (condition, data) in enumerate(price_info["price_by_condition"].items()):
+                if isinstance(data, dict) and data.get("value"):
+                    with condition_cols[i]:
+                        st.metric(f"{condition}", f"{currency} {data['value']}")
+        
+        # Debug info (can be removed in production)
+        with st.expander("🐛 Debug: Market Data"):
+            st.write("**Price Info:**", price_info)
+            st.write("**Market Stats:**", market_stats)
+            st.write("**Release Overview:**", release_overview)
     
     # Tracklist
     if tracks:
@@ -290,16 +387,39 @@ def display_result(result: Dict):
             with track_col2:
                 track_links = []
                 
+                # YouTube link handling - supports multiple formats
+                youtube_data = track.get("youtube")
+                if youtube_data and isinstance(youtube_data, dict):
+                    youtube_url = youtube_data.get("url")
+                    if youtube_url:
+                        if youtube_data.get("is_search", True):
+                            # Optimized search link
+                            search_type = youtube_data.get("search_type", "search")
+                            if search_type == "optimized":
+                                icon = "🎯"  # Optimized search
+                                title = f"Smart search: {youtube_data.get('query', 'YouTube')}"
+                            else:
+                                icon = "🔍"  # Regular search
+                                title = "Search on YouTube"
+                            track_links.append(f'<a href="{youtube_url}" target="_blank" class="link-button youtube-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;" title="{title}">{icon}</a>')
+                        else:
+                            # Direct video link
+                            track_links.append(f'<a href="{youtube_url}" target="_blank" class="link-button youtube-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;" title="{youtube_data.get("title", "YouTube Video")}">📺</a>')
+                
+                # Fallback for other YouTube URL formats
+                elif track.get("youtube_url"):
+                    track_links.append(f'<a href="{track["youtube_url"]}" target="_blank" class="link-button youtube-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;" title="{track.get("youtube_title", "YouTube Video")}">📺</a>')
+                elif track.get("youtube_search"):
+                    track_links.append(f'<a href="{track["youtube_search"]}" target="_blank" class="link-button youtube-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;" title="Search on YouTube">🔍</a>')
+                
+                # Spotify link
                 if track.get("spotify_url"):
                     track_links.append(f'<a href="{track["spotify_url"]}" target="_blank" class="link-button spotify-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;">🎵</a>')
                 
-                if track.get("youtube_url"):
-                    track_links.append(f'<a href="{track["youtube_url"]}" target="_blank" class="link-button youtube-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;">📺</a>')
-                elif track.get("youtube_search"):
-                    track_links.append(f'<a href="{track["youtube_search"]}" target="_blank" class="link-button youtube-link" style="font-size: 0.8em; padding: 0.25rem 0.5rem;">🔍</a>')
-                
                 if track_links:
                     st.markdown(" ".join(track_links), unsafe_allow_html=True)
+                else:
+                    st.write("🎵 No links available")
 
 def main():
     """Main Streamlit app"""
@@ -333,6 +453,17 @@ def main():
         2. Upload an album cover image
         3. Wait for AI analysis
         4. Explore the results!
+        """)
+        
+        st.markdown("---")
+        st.markdown("### 🎯 YouTube Integration")
+        st.markdown("""
+        **Smart Search Links**: YouTube links use optimized search queries 
+        that often land on the correct track video. Look for the 🎯 icon 
+        for the best search results!
+        
+        **Note**: In hosted environments, direct video access may be 
+        restricted for security reasons.
         """)
     
     # Check API key
