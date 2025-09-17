@@ -1,295 +1,343 @@
-import streamlit as st
 import os
-from PIL import Image
 import requests
-from dotenv import load_dotenv
+import streamlit as st
+from io import BytesIO
+from PIL import Image, ImageOps
+import cv2
+import numpy as np
 
-# Load environment variables
-load_dotenv()
 
-# Import collectors
-from collectors.simple_collectors import GeminiCollector, DiscogsCollector, SpotifyCollector, YouTubeCollector, BandcampCollector
+st.set_page_config(page_title="Crate‑Mate", page_icon="🎚️", layout="wide")
 
-# Configure Streamlit page
-st.set_page_config(
-    page_title="Crate-Mate",
-    layout="wide",
-    initial_sidebar_state="expanded"
+# Backend base URL
+API_BASE_URL = (
+    st.secrets.get("API_BASE_URL")
+    or os.getenv("API_BASE_URL")
+    or os.getenv("REACT_APP_API_BASE_URL")
+    or "/api"
 )
 
-# Initialize session state
-if 'uploaded_image' not in st.session_state:
-    st.session_state.uploaded_image = None
+st.title("Crate‑Mate")
+st.caption("Scan a record cover and get links + tracklist")
 
-# Main title
-st.title("Crate-Mate")
-st.write("Upload an album cover image to identify and get detailed information")
+# Minimal CSS tweaks for spacing/link badges
+st.markdown(
+    """
+    <style>
+      /* General */
+      .small-muted { color: #9aa0a6; font-size: 0.9rem; }
 
-# Sidebar for API status
-with st.sidebar:
-    st.write("### API Status")
-    
-    # Initialize collectors
-    collectors = {}
-    
-    # Gemini AI
-    gemini_key = os.getenv('GEMINI_API_KEY')
-    if gemini_key:
-        try:
-            collectors['gemini'] = GeminiCollector()
-            st.write("✓ Gemini AI (env)")
-        except Exception as e:
-            st.write("✗ Gemini AI Error")
-    else:
-        st.write("✗ Gemini AI")
-    
-    # Discogs
-    discogs_token = os.getenv('DISCOGS_TOKEN')
-    if discogs_token:
-        try:
-            collectors['discogs'] = DiscogsCollector(discogs_token)
-            st.write("✓ Discogs (env)")
-        except Exception as e:
-            st.write("✗ Discogs Error")
-    else:
-        st.write("✗ Discogs")
-    
-    # Spotify
-    spotify_client_id = os.getenv('SPOTIFY_CLIENT_ID')
-    spotify_client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
-    if spotify_client_id and spotify_client_secret:
-        try:
-            collectors['spotify'] = SpotifyCollector(spotify_client_id, spotify_client_secret)
-            st.write("✓ Spotify (env)")
-        except Exception as e:
-            st.write("✗ Spotify Error")
-    else:
-        st.write("✗ Spotify")
-    
-    # YouTube
-    youtube_key = os.getenv('YOUTUBE_API_KEY')
-    if youtube_key:
-        try:
-            collectors['youtube'] = YouTubeCollector(youtube_key)
-            st.write("✓ YouTube (env)")
-        except Exception as e:
-            st.write("✗ YouTube Error")
-    else:
-        collectors['youtube'] = YouTubeCollector()  # Works without API key
-        st.write("⚠ YouTube (basic)")
-    
-    # Bandcamp
-    collectors['bandcamp'] = BandcampCollector()
-    st.write("✓ Bandcamp")
+      /* Top links grid */
+      .links-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 6px 0 16px; }
+      .links-grid a { display: block; text-align: center; padding: 8px 10px; border-radius: 8px; background: #1f2937; color: #e5e7eb !important; text-decoration: none; }
+      .links-grid a:hover { background: #374151; }
 
-# File upload
-uploaded_file = st.file_uploader("Choose an album cover image", type=['png', 'jpg', 'jpeg'])
+      /* Tracklist rows */
+      .track-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+      .track-pos { width: 2.6rem; flex: 0 0 auto; font-weight: 600; opacity: 0.85; }
+      .track-main { flex: 1 1 auto; min-width: 0; }
+      .track-actions { flex: 0 0 auto; display: flex; gap: 8px; }
+      .track-actions a { padding: 4px 8px; border-radius: 6px; background: #1f2937; color: #e5e7eb !important; text-decoration: none; white-space: nowrap; }
+      .track-actions a:hover { background: #374151; }
 
-# URL input as alternative
-st.write("**Or paste an image URL:**")
-image_url = st.text_input("Image URL", placeholder="https://example.com/album-cover.jpg")
+      /* Mobile tweaks */
+      @media (max-width: 640px) {
+        .links-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .track-pos { width: 2.2rem; }
+        .track-actions a { padding: 4px 6px; font-size: 0.9rem; }
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# Process image
-image = None
-if uploaded_file is not None:
+st.markdown("""
+📸 **How to use:**
+1. Take a photo of your record with your phone's camera
+2. Upload the photo below
+3. We'll automatically detect and crop the record cover
+""")
+
+uploaded = st.file_uploader(
+    "Upload a photo of your record", 
+    type=["jpg", "jpeg", "png", "webp"],
+    help="Take a photo with your camera app, then upload it here"
+)
+
+selected_file = uploaded
+
+def detect_record_cover(img):
+    """Detect and extract the record cover from an image using OpenCV."""
+    # Convert PIL image to OpenCV format
+    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    original = img_cv.copy()
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    
+    # Apply bilateral filter to reduce noise while keeping edges sharp
+    gray = cv2.bilateralFilter(gray, 11, 17, 17)
+    
+    # Edge detection
+    edges = cv2.Canny(gray, 30, 200)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Sort contours by area and keep the largest ones
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
+    
+    # Look for a square/rectangular contour
+    record_contour = None
+    for contour in contours:
+        # Approximate the contour
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+        
+        # If the approximated contour has 4 points, it's likely a rectangle
+        if len(approx) == 4:
+            # Check if it's roughly square (aspect ratio close to 1)
+            x, y, w, h = cv2.boundingRect(approx)
+            aspect_ratio = float(w) / h
+            if 0.7 < aspect_ratio < 1.3:  # Allow some tolerance for perspective
+                record_contour = approx
+                break
+    
+    if record_contour is not None:
+        # Order the points for perspective transform
+        pts = record_contour.reshape(4, 2)
+        rect = np.zeros((4, 2), dtype="float32")
+        
+        # Find the top-left, top-right, bottom-right, and bottom-left points
+        s = pts.sum(axis=1)
+        rect[0] = pts[np.argmin(s)]  # Top-left
+        rect[2] = pts[np.argmax(s)]  # Bottom-right
+        
+        diff = np.diff(pts, axis=1)
+        rect[1] = pts[np.argmin(diff)]  # Top-right
+        rect[3] = pts[np.argmax(diff)]  # Bottom-left
+        
+        # Compute the width and height of the new image
+        (tl, tr, br, bl) = rect
+        width_a = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+        width_b = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+        max_width = max(int(width_a), int(width_b))
+        
+        height_a = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        height_b = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        max_height = max(int(height_a), int(height_b))
+        
+        # Make it square
+        max_dim = max(max_width, max_height)
+        
+        # Destination points for the transform
+        dst = np.array([
+            [0, 0],
+            [max_dim - 1, 0],
+            [max_dim - 1, max_dim - 1],
+            [0, max_dim - 1]], dtype="float32")
+        
+        # Apply perspective transform
+        M = cv2.getPerspectiveTransform(rect, dst)
+        warped = cv2.warpPerspective(original, M, (max_dim, max_dim))
+        
+        # Convert back to PIL Image
+        warped_rgb = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(warped_rgb)
+    
+    # If no record detected, return None
+    return None
+
+
+def _prepare_image_bytes(file_like) -> tuple[bytes, str]:
+    """Open, orient, detect record cover, square-crop, downscale and JPEG-encode the image.
+    Returns (bytes, filename).
+    """
     try:
-        image = Image.open(uploaded_file)
-        st.session_state.uploaded_image = image
+        img = Image.open(file_like)
+        # Respect EXIF orientation
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
+
+        # Try to detect and extract the record cover
+        detected_record = detect_record_cover(img)
+        
+        if detected_record is not None:
+            img = detected_record
+            st.success("✅ Record cover detected and extracted!")
+        else:
+            # Fallback to center square crop if detection fails
+            st.info("📷 Using center crop (tip: try to fill the frame with the record)")
+            width, height = img.size
+            side = min(width, height)
+            left = (width - side) // 2
+            top = (height - side) // 2
+            img = img.crop((left, top, left + side, top + side))
+
+        # Downscale large images to reduce upload size (helps mobile)
+        max_dim = 1280
+        w, h = img.size
+        scale = min(1.0, max_dim / max(w, h))
+        if scale < 1.0:
+            new_size = (int(w * scale), int(h * scale))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        payload = buf.getvalue()
+        filename = getattr(file_like, "name", "capture.jpg") or "capture.jpg"
+        return payload, filename
     except Exception as e:
-        st.error(f"Error loading image: {str(e)}")
+        st.warning(f"Image processing error: {str(e)}. Using original image.")
+        # Fallback to pass-through bytes
+        file_like.seek(0) if hasattr(file_like, 'seek') else None
+        raw = file_like.getvalue() if hasattr(file_like, "getvalue") else file_like.read()
+        filename = getattr(file_like, "name", "upload.jpg") or "upload.jpg"
+        return raw, filename
 
-elif image_url:
-    try:
-        response = requests.get(image_url)
-        response.raise_for_status()
-        image = Image.open(requests.get(image_url, stream=True).raw)
-        st.session_state.uploaded_image = image
-    except Exception as e:
-        st.error(f"Error loading image from URL: {str(e)}")
+if selected_file is not None:
+    # Process and show preview
+    with st.spinner("Processing image..."):
+        try:
+            # Process the image
+            payload, fname = _prepare_image_bytes(selected_file)
+            
+            # Show preview of what will be sent
+            st.write("### Preview")
+            preview_img = Image.open(BytesIO(payload))
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(preview_img, caption="Processed image (square cropped)", use_container_width=True)
+            
+            files = {"image": (fname, payload, "image/jpeg")}
+        except Exception as e:
+            st.error(f"Error processing image: {str(e)}")
+            files = {"image": (getattr(selected_file, "name", "upload.jpg"), selected_file.getvalue(), getattr(selected_file, "type", None) or "image/jpeg")}
 
-# Use session state image if available
-if st.session_state.uploaded_image is not None:
-    image = st.session_state.uploaded_image
+    with st.spinner("Identifying…"):
+        try:
+            resp = requests.post(f"{API_BASE_URL}/upload", files=files, timeout=120)
+            if resp.status_code == 200:
+                data = resp.json()
+                st.success("Match found")
 
-if image:
-    # Display uploaded image
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.image(image, caption="Album Cover", width=300)
-    
-    with col2:
-        if st.button("Identify Album", type="primary"):
-            try:
-                # Resize image if too large
-                processed_image = image
-                if image.size[0] > 1024 or image.size[1] > 1024:
-                    processed_image = image.resize((1024, 1024), Image.Resampling.LANCZOS)
-                
-                # AI identification
-                gemini_result = None
-                if 'gemini' in collectors:
-                    with st.spinner("Analyzing album cover..."):
-                        gemini_result = collectors['gemini'].identify_album(processed_image)
-                
-                if gemini_result and gemini_result.get('confidence', 0) > 50:
-                    artist = gemini_result.get('artist', 'Unknown')
-                    album = gemini_result.get('album', 'Unknown')
-                    
-                    st.success("Album identified successfully")
-                    
-                    # Basic info
-                    st.write("### Album Information")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**Artist:** {artist}")
-                        st.write(f"**Album:** {album}")
-                    with col2:
-                        st.write(f"**Year:** {gemini_result.get('year', 'Unknown')}")
-                        st.write(f"**Confidence:** {gemini_result.get('confidence', 0)}%")
-                    
-                    # Get Discogs data
-                    discogs_result = None
-                    if 'discogs' in collectors and artist != 'Unknown' and album != 'Unknown':
-                        with st.spinner("Getting detailed information..."):
-                            discogs_result = collectors['discogs'].search_album(artist, album)
-                    
-                    if discogs_result:
-                        # Album details
-                        st.write("### Details")
-                        
-                        col1, col2 = st.columns([1, 2])
-                        with col1:
-                            if discogs_result.get('cover_image'):
-                                st.image(discogs_result['cover_image'], width=200)
-                        
-                        with col2:
-                            if discogs_result.get('year'):
-                                st.write(f"**Year:** {discogs_result['year']}")
-                            if discogs_result.get('genre'):
-                                st.write(f"**Genre:** {', '.join(discogs_result['genre'])}")
-                            if discogs_result.get('label'):
-                                st.write(f"**Label:** {discogs_result['label']}")
-                            if discogs_result.get('catalog_number'):
-                                st.write(f"**Catalog:** {discogs_result['catalog_number']}")
-                        
-                        # Tracklist - SINGLE SECTION ONLY
-                        if discogs_result.get('tracklist'):
-                            st.write("### Tracklist")
-                            
-                            # Get track data
-                            spotify_tracks = []
-                            youtube_tracks = []
-                            
-                            if 'spotify' in collectors:
-                                spotify_album = collectors['spotify'].search_album(artist, album)
-                                if spotify_album and spotify_album.get('tracks'):
-                                    spotify_tracks = spotify_album['tracks']
-                            
-                            if 'youtube' in collectors:
-                                track_titles = []
-                                for track in discogs_result['tracklist']:
-                                    if isinstance(track, dict):
-                                        track_titles.append(track.get('title', ''))
-                                    else:
-                                        track_titles.append(str(track))
-                                
-                                youtube_tracks = collectors['youtube'].generate_track_links(
-                                    artist, album, track_titles
-                                )
-                            
-                            # Display tracks
-                            for i, track in enumerate(discogs_result['tracklist'], 1):
-                                if isinstance(track, dict):
-                                    track_title = track.get('title', track.get('name', ''))
-                                    track_duration = track.get('duration', '')
-                                    track_position = track.get('position', str(i))
+                # Basic fields
+                album = data.get("album") or {}
+                cover = album.get("image")
+                artist_name = data.get('artist_name') or album.get('artist') or ""
+                album_name = data.get('album_name') or album.get('name') or ""
+
+                left, right = st.columns([1, 2])
+                with left:
+                    if cover:
+                        st.image(cover, caption=None, use_container_width=True)
+                with right:
+                    st.subheader(f"{artist_name} - {album_name}")
+
+                    # Links
+                    links = data.get("links") or {}
+                    discogs = links.get("discogs") or data.get("discogs_url")
+                    spotify = links.get("spotify") or data.get("spotify_url")
+                    youtube = links.get("youtube") or data.get("youtube_url")
+                    bandcamp = links.get("bandcamp") or data.get("bandcamp_url")
+
+                    grid_html_parts = ["<div class='links-grid'>"]
+                    if discogs and discogs != "unavailable":
+                        grid_html_parts.append(f"<a href='{discogs}' target='_blank' rel='noopener'>View on Discogs</a>")
+                    if youtube and youtube != "unavailable":
+                        grid_html_parts.append(f"<a href='{youtube}' target='_blank' rel='noopener'>YouTube</a>")
+                    if spotify and spotify != "unavailable":
+                        grid_html_parts.append(f"<a href='{spotify}' target='_blank' rel='noopener'>Spotify</a>")
+                    if bandcamp:
+                        grid_html_parts.append(f"<a href='{bandcamp}' target='_blank' rel='noopener'>Bandcamp</a>")
+                    grid_html_parts.append("</div>")
+                    st.markdown("".join(grid_html_parts), unsafe_allow_html=True)
+
+                    # Confidence display (if provided by backend)
+                    conf = data.get("confidence")
+                    if conf is not None:
+                        try:
+                            conf_pct = f"{float(conf) * 100:.0f}%"
+                        except Exception:
+                            conf_pct = str(conf)
+                        st.markdown(f"**Confidence:** {conf_pct}")
+
+                # Market
+                low = data.get("lowest_price")
+                copies = data.get("num_for_sale")
+                currency = data.get("price_currency") or data.get("market_stats", {}).get("currency") or ""
+                if low or copies:
+                    m1, m2 = st.columns(2)
+                    with m1:
+                        st.metric("For sale (Discogs)", value=str(copies or 0))
+                    with m2:
+                        if low is not None:
+                            st.metric("Lowest price", value=f"{currency}{low}")
+
+                # Tracklist
+                tracks = (data.get("tracks") or {}).get("tracklist") or []
+                if tracks:
+                    st.write("### Tracklist")
+                    from urllib.parse import quote_plus
+                    rows_html = []
+                    for t in tracks:
+                        pos = t.get("position", "")
+                        name = t.get("title", "")
+                        dur = t.get("duration", "")
+                        yt = (t.get("youtube") or {}).get("url") if t.get("youtube") else None
+                        sp = (t.get("spotify") or {}).get("url") if t.get("spotify") else None
+
+                        # Fallback search links when direct links are missing
+                        if not yt and (artist_name or album_name) and name:
+                            q = quote_plus(f"{artist_name} {album_name} {name}")
+                            yt = f"https://www.youtube.com/results?search_query={q}"
+                        if not sp and artist_name and name:
+                            q = quote_plus(f"{artist_name} {name}")
+                            sp = f"https://open.spotify.com/search/{q}"
+
+                        title_html = name + (f"  <span class='small-muted'>— {dur}</span>" if dur else "")
+                        actions_html = []
+                        if yt:
+                            actions_html.append(f"<a href='{yt}' target='_blank' rel='noopener'>YouTube</a>")
+                        if sp:
+                            actions_html.append(f"<a href='{sp}' target='_blank' rel='noopener'>Spotify</a>")
+
+                        row_html = f"""
+                        <div class='track-row'>
+                            <div class='track-pos'><strong>{pos}</strong></div>
+                            <div class='track-main'>{title_html}</div>
+                            <div class='track-actions'>{''.join(actions_html)}</div>
+                        </div>
+                        """
+                        rows_html.append(row_html)
+
+                    st.markdown("\n".join(rows_html), unsafe_allow_html=True)
+
+                # Alternatives if low confidence (expander for mobile visibility)
+                try:
+                    conf_val = float(data.get("confidence")) if data.get("confidence") is not None else None
+                except Exception:
+                    conf_val = None
+                if conf_val is not None and conf_val < 0.9:
+                    alts = data.get("alternatives") or []
+                    if alts:
+                        with st.expander("Other possible matches"):
+                            for alt in alts:
+                                a_title = f"{alt.get('artist','')} - {alt.get('title','')}"
+                                if alt.get("discogs"):
+                                    st.markdown(f"- [{a_title}]({alt['discogs']})")
                                 else:
-                                    track_title = str(track)
-                                    track_duration = ''
-                                    track_position = str(i)
-                                
-                                # Track row
-                                col1, col2, col3 = st.columns([3, 1, 1])
-                                
-                                with col1:
-                                    st.write(f"**{track_position}. {track_title}**")
-                                    if track_duration:
-                                        st.caption(f"Duration: {track_duration}")
-                                    elif i <= len(spotify_tracks) and spotify_tracks[i-1].get('duration'):
-                                        st.caption(f"Duration: {spotify_tracks[i-1]['duration']}")
-                                
-                                with col2:
-                                    # Spotify link
-                                    if i <= len(spotify_tracks) and spotify_tracks[i-1].get('spotify_url'):
-                                        st.link_button("Spotify", spotify_tracks[i-1]['spotify_url'])
-                                    else:
-                                        st.button("Spotify", disabled=True, key=f"spotify_disabled_{i}")
-                                
-                                with col3:
-                                    # YouTube link
-                                    if i <= len(youtube_tracks) and youtube_tracks[i-1].get('youtube_url'):
-                                        st.link_button("YouTube", youtube_tracks[i-1]['youtube_url'])
-                                    else:
-                                        st.button("YouTube", disabled=True, key=f"youtube_disabled_{i}")
-                        
-                        # Price info
-                        if discogs_result.get('price_info'):
-                            price_info = discogs_result['price_info']
-                            st.write("### Market Information")
-                            col1, col2, col3 = st.columns(3)
-                            
-                            with col1:
-                                if price_info.get('lowest_price'):
-                                    st.metric("Lowest Price", f"${price_info['lowest_price']}")
-                            with col2:
-                                if price_info.get('median_price'):
-                                    st.metric("Median Price", f"${price_info['median_price']}")
-                            with col3:
-                                if price_info.get('num_for_sale'):
-                                    st.metric("Available Copies", price_info['num_for_sale'])
-                        
-                        # Platform links
-                        st.write("### Listen & Buy")
-                        link_cols = st.columns(4)
-                        
-                        # Discogs
-                        with link_cols[0]:
-                            if discogs_result.get('discogs_url'):
-                                st.link_button("Discogs", discogs_result['discogs_url'])
-                        
-                        # Spotify
-                        with link_cols[1]:
-                            if 'spotify' in collectors:
-                                spotify_result = collectors['spotify'].search_album(artist, album)
-                                if spotify_result and spotify_result.get('spotify_url'):
-                                    st.link_button("Spotify", spotify_result['spotify_url'])
-                        
-                        # YouTube
-                        with link_cols[2]:
-                            if 'youtube' in collectors:
-                                youtube_result = collectors['youtube'].search_album(artist, album)
-                                if youtube_result and youtube_result.get('youtube_url'):
-                                    st.link_button("YouTube", youtube_result['youtube_url'])
-                        
-                        # Bandcamp
-                        with link_cols[3]:
-                            if 'bandcamp' in collectors:
-                                bandcamp_result = collectors['bandcamp'].search_album(artist, album)
-                                if bandcamp_result and bandcamp_result.get('bandcamp_url'):
-                                    st.link_button("Bandcamp", bandcamp_result['bandcamp_url'])
-                    
-                    else:
-                        st.info("Basic identification successful. Enhanced data not available.")
-                
-                else:
-                    st.error("Could not identify the album. Please try a different image.")
-                
-            except Exception as e:
-                st.error(f"Error during identification: {str(e)}")
+                                    st.write(f"- {a_title}")
+            else:
+                try:
+                    msg = resp.json()
+                except Exception:
+                    msg = resp.text
+                st.error(f"API error {resp.status_code}: {msg}")
+        except Exception as e:
+            st.error(f"Request failed: {e}")
 
-# Clear button
-if st.session_state.uploaded_image is not None:
-    if st.button("Clear Image"):
-        st.session_state.uploaded_image = None
-        st.rerun()
+st.sidebar.header("Settings")
+st.sidebar.write("API base URL used:")
+st.sidebar.code(API_BASE_URL)
+
