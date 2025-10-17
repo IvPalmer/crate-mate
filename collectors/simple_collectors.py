@@ -4,14 +4,20 @@ Simple standalone collectors for Streamlit app
 import os
 import io
 import logging
-import requests
-from urllib.parse import quote
 import re
+from urllib.parse import quote
+
+import requests
 import google.generativeai as genai
 from PIL import Image
 import discogs_client
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
+
+try:
+    from yt_dlp import YoutubeDL
+except ImportError:  # yt-dlp is optional; fallback to scraping
+    YoutubeDL = None
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +329,22 @@ class YouTubeCollector:
                     if items:
                         video_id = items[0]['id']['videoId']
                         return f"https://www.youtube.com/watch?v={video_id}"
+
+            # Next best: use yt-dlp search if available
+            if YoutubeDL is not None:
+                try:
+                    with YoutubeDL({
+                        'quiet': True,
+                        'skip_download': True,
+                        'noplaylist': True,
+                        'default_search': 'ytsearch1',
+                    }) as ydl:
+                        info = ydl.extract_info(query, download=False)
+                        entries = info.get('entries') or []
+                        if entries:
+                            return "https://www.youtube.com/watch?v=" + entries[0]['id']
+                except Exception as exc:
+                    logger.debug(f"yt-dlp search failed: {exc}")
 
             # Fallback: scrape the YouTube search page for first video id
             response = requests.get(
