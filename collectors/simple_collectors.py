@@ -2,6 +2,7 @@
 Simple standalone collectors for Streamlit app
 """
 import os
+import io
 import logging
 import requests
 from urllib.parse import quote
@@ -20,8 +21,17 @@ class GeminiCollector:
         if not api_key:
             raise ValueError("GEMINI_API_KEY not found")
         genai.configure(api_key=api_key)
-        # Prefer the stable "latest" alias; fall back if SDK expects short name
-        preferred_models = ["models/gemini-1.5-flash-latest", "gemini-1.5-flash-latest", "models/gemini-1.5-flash"]
+        # Prefer newest flash models, fall back to older ones if unavailable.
+        preferred_models = [
+            "models/gemini-2.5-flash",
+            "gemini-2.5-flash",
+            "models/gemini-2.0-flash",
+            "gemini-2.0-flash",
+            "models/gemini-1.5-flash-latest",
+            "gemini-1.5-flash-latest",
+            "models/gemini-1.5-flash",
+            "gemini-1.5-flash",
+        ]
         last_error = None
         for model_name in preferred_models:
             try:
@@ -52,7 +62,16 @@ class GeminiCollector:
             Confidence: [percentage]%
             """
             
-            response = self.model.generate_content([prompt, image])
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            image_bytes = buffer.getvalue()
+            response = self.model.generate_content([
+                prompt,
+                {
+                    "mime_type": "image/png",
+                    "data": image_bytes,
+                },
+            ])
             text = response.text
             
             # Parse response
