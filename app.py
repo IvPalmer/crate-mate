@@ -13,13 +13,13 @@ st.set_page_config(
     page_title="Crate‑Mate",
     page_icon="🎵",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS
 APP_VERSION = "2025-10-17"
 
-st.experimental_set_query_params(app_version=APP_VERSION)
+st.query_params.update(app_version=APP_VERSION)
 
 st.markdown(
     f"""
