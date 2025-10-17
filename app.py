@@ -17,7 +17,26 @@ st.set_page_config(
 )
 
 # Custom CSS
-st.markdown("""
+APP_VERSION = "2025-10-17"
+
+st.experimental_set_query_params(app_version=APP_VERSION)
+
+st.markdown(
+    f"""
+<script>
+try {{
+    const versionKey = 'crate-mate-app-version';
+    const currentVersion = window.localStorage.getItem(versionKey);
+    if (currentVersion !== '{APP_VERSION}') {{
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+        window.localStorage.setItem(versionKey, '{APP_VERSION}');
+    }}
+}} catch (err) {{
+    console.warn('Storage reset skipped', err);
+}}
+</script>
+
 <style>
     .main-header {
         text-align: center;
@@ -73,7 +92,9 @@ st.markdown("""
         border: 1px solid #f5c6cb;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Import collectors (self-contained versions)
 try:

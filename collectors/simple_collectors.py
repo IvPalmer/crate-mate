@@ -5,6 +5,7 @@ import os
 import io
 import logging
 import re
+import unicodedata
 from urllib.parse import quote
 
 import requests
@@ -118,7 +119,8 @@ class DiscogsCollector:
         if not album:
             return []
 
-        base = album.strip()
+        normalized = unicodedata.normalize('NFKD', album).encode('ascii', 'ignore').decode('ascii')
+        base = normalized.strip()
         if base:
             variants.add(base)
 
