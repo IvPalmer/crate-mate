@@ -78,7 +78,7 @@ st.markdown("""
 
 # Import collectors
 try:
-    from gemini import GeminiVisionCollector
+    from gemini import GeminiCollector
     from discogs import DiscogsCollector
     from spotify import SpotifyCollector
     from youtube import YouTubeCollector
