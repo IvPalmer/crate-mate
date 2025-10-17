@@ -174,7 +174,7 @@ with col1:
     # Process button maintains state & uploaded bytes
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Album Cover", width="stretch")
+        st.image(image, caption="Uploaded Album Cover", use_container_width=True)
         if st.button("🔍 Identify Album", disabled=st.session_state.processing):
             if not gemini_key:
                 st.error("❌ Gemini API key is required for album identification!")
