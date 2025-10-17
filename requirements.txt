@@ -10,3 +10,4 @@ aiohttp
 fuzzywuzzy
 python-Levenshtein
 pytesseract
+opencv-python-headless
