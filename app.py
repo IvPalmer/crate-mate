@@ -238,8 +238,21 @@ with col2:
                         # Search Discogs
                         if 'discogs' in collectors:
                             try:
-                                discogs_result = collectors['discogs'].search_album(artist_name, album_name)
-                                if discogs_result:
+                                fallback_terms = [
+                                    f"{artist_name} {album_name} vinyl",
+                                    f"{album_name} {artist_name} LP",
+                                    f"{artist_name} full album",
+                                ]
+
+                                discogs_result = collectors['discogs'].search_album(
+                                    artist_name,
+                                    album_name,
+                                    fallback_search_terms=fallback_terms,
+                                )
+
+                                if not discogs_result:
+                                    st.info("Discogs did not return a release; using YouTube fallback only.")
+                                else:
                                     results['discogs'] = {
                                         "url": discogs_result.get("discogs_url") or discogs_result.get("url"),
                                         "price_info": discogs_result.get("price_info"),
@@ -268,6 +281,7 @@ with col2:
                             if youtube_result:
                                 results['youtube'] = {
                                     "url": youtube_result.get("youtube_url") or youtube_result.get("url"),
+                                    "tracklist": youtube_result.get("tracks"),
                                     "raw": youtube_result,
                                 }
                         except Exception as e:
@@ -326,22 +340,35 @@ with col2:
         # Additional service results
         st.markdown("#### 🔗 Links & Additional Info")
         
-        # Discogs
-        if 'discogs' in results:
-            discogs_data = results['discogs']
-            st.markdown("**💿 Discogs:**")
-            if discogs_data.get('url'):
-                st.markdown(f"[View on Discogs]({discogs_data['url']})")
-            elif discogs_data.get('raw', {}).get('discogs_url'):
-                st.markdown(f"[View on Discogs]({discogs_data['raw']['discogs_url']})")
-            if discogs_data.get('price_info'):
-                st.write(f"Price info: {discogs_data['price_info']}")
-            if discogs_data.get('tracklist'):
-                st.markdown("**Tracklist**")
-                for track in discogs_data['tracklist']:
-                    title = track.get('title')
-                    yt_url = track.get('youtube_url')
+        discogs_data = results.get('discogs')
+        youtube_data = results.get('youtube')
+
+        if discogs_data or youtube_data:
+            if discogs_data:
+                st.markdown("**💿 Discogs:**")
+                if discogs_data.get('url'):
+                    st.markdown(f"[View on Discogs]({discogs_data['url']})")
+                elif discogs_data.get('raw', {}).get('discogs_url'):
+                    st.markdown(f"[View on Discogs]({discogs_data['raw']['discogs_url']})")
+                if discogs_data.get('price_info'):
+                    st.write(f"Price info: {discogs_data['price_info']}")
+
+            combined_tracks = []
+            if discogs_data and discogs_data.get('tracklist'):
+                combined_tracks.extend(discogs_data['tracklist'])
+            if youtube_data and youtube_data.get('tracklist'):
+                combined_tracks.extend(youtube_data['tracklist'])
+
+            if combined_tracks:
+                st.markdown("**Tracklist & Videos**")
+                seen = set()
+                for track in combined_tracks:
+                    title = track.get('title') or track.get('name')
+                    if not title or title.lower() in seen:
+                        continue
+                    seen.add(title.lower())
                     duration = track.get('duration')
+                    yt_url = track.get('youtube_url')
                     line = f"- {title}"
                     if duration:
                         line += f" ({duration})"

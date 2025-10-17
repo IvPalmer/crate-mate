@@ -113,17 +113,92 @@ class DiscogsCollector:
         if token:
             self.client = discogs_client.Client("CrateMate/1.0", user_token=token)
     
-    def search_album(self, artist, album):
+    def _album_variants(self, album: str):
+        variants = set()
+        if not album:
+            return []
+
+        base = album.strip()
+        if base:
+            variants.add(base)
+
+        replacements = [
+            ("Vol.", "Vol"),
+            ("Vol", "Vol."),
+            ("Vol.", "Volume"),
+            ("Vol", "Volume"),
+            ("Volume", "Vol."),
+            ("Volume", "Vol"),
+        ]
+
+        for old, new in replacements:
+            if old in base:
+                variants.add(base.replace(old, new))
+
+        normalized = set()
+        for value in variants:
+            clean = re.sub(r"[^0-9A-Za-z ]+", " ", value)
+            clean = re.sub(r"\s+", " ", clean).strip()
+            if clean:
+                normalized.add(clean)
+
+        return list(normalized)
+
+    def search_album(self, artist, album, fallback_search_terms=None):
         """Search for album on Discogs"""
         if not self.client:
             return None
 
-        try:
-            query = f"{artist} {album}"
-            results = self.client.search(query, type="release")
+        album_variants = self._album_variants(album)
+        if not album_variants:
+            album_variants = [album]
 
-            if results and results.count > 0:
-                release = results[0]  # Get first result
+        search_terms = [f"{artist} {variant}".strip() for variant in album_variants if variant]
+        if not search_terms:
+            search_terms = [f"{artist} {album}"]
+        if fallback_search_terms:
+            search_terms.extend([term for term in fallback_search_terms if term])
+
+        for term in search_terms:
+            try:
+                results = self.client.search(term, type="release")
+
+                if results and results.count > 0:
+                    # Prefer releases with tracklists; fall back to first item
+                    release = None
+
+                    try:
+                        candidates = list(results.page(1))
+                    except Exception:
+                        candidates = []
+
+                    # First pass: find any candidate with a tracklist
+                    for candidate in candidates:
+                        if getattr(candidate, 'tracklist', None):
+                            release = candidate
+                            break
+
+                    # Second pass: choose best textual match if not found yet
+                    if release is None and candidates:
+                        query_normalized = term.lower()
+                        best_score = -1
+                        best_candidate = candidates[0]
+                        for candidate in candidates:
+                            name_parts = [
+                                getattr(candidate, 'title', ''),
+                                ' '.join([a.name for a in getattr(candidate, 'artists', [])])
+                            ]
+                            candidate_name = ' '.join([part for part in name_parts if part]).lower()
+                            score = sum(1 for word in query_normalized.split() if word in candidate_name)
+                            if score > best_score:
+                                best_score = score
+                                best_candidate = candidate
+                        release = best_candidate
+
+                    if release is None:
+                        release = results[0]
+                else:
+                    continue
 
                 data = {
                     'artist': release.artists[0].name if release.artists else artist,
@@ -187,8 +262,8 @@ class DiscogsCollector:
 
                 return data
 
-        except Exception as e:
-            logger.error(f"Discogs error: {e}")
+            except Exception as e:
+                logger.error(f"Discogs error for term '{term}': {e}")
 
         return None
 
