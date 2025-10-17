@@ -21,8 +21,7 @@ APP_VERSION = "2025-10-17"
 
 st.query_params.update(app_version=APP_VERSION)
 
-st.markdown(
-    f"""
+version_reset_script = f"""
 <script>
 try {{
     const versionKey = 'crate-mate-app-version';
@@ -36,7 +35,9 @@ try {{
     console.warn('Storage reset skipped', err);
 }}
 </script>
+"""
 
+custom_css = """
 <style>
     .main-header {
         text-align: center;
@@ -92,9 +93,9 @@ try {{
         border: 1px solid #f5c6cb;
     }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+"""
+
+st.markdown(version_reset_script + custom_css, unsafe_allow_html=True)
 
 # Import collectors (self-contained versions)
 try:
