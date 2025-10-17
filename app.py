@@ -235,7 +235,12 @@ with col2:
                             try:
                                 discogs_result = collectors['discogs'].search_album(artist_name, album_name)
                                 if discogs_result:
-                                    results['discogs'] = discogs_result
+                                    results['discogs'] = {
+                                        "url": discogs_result.get("discogs_url") or discogs_result.get("url"),
+                                        "price_info": discogs_result.get("price_info"),
+                                        "tracklist": discogs_result.get("tracklist"),
+                                        "raw": discogs_result,
+                                    }
                             except Exception as e:
                                 st.warning(f"Discogs search failed: {e}")
                         
@@ -244,7 +249,11 @@ with col2:
                             try:
                                 spotify_result = collectors['spotify'].search_album(artist_name, album_name)
                                 if spotify_result:
-                                    results['spotify'] = spotify_result
+                                    results['spotify'] = {
+                                        "url": spotify_result.get("spotify_url") or spotify_result.get("url"),
+                                        "tracks": spotify_result.get("tracks"),
+                                        "raw": spotify_result,
+                                    }
                             except Exception as e:
                                 st.warning(f"Spotify search failed: {e}")
                         
@@ -252,7 +261,10 @@ with col2:
                         try:
                             youtube_result = collectors['youtube'].search_album(artist_name, album_name)
                             if youtube_result:
-                                results['youtube'] = youtube_result
+                                results['youtube'] = {
+                                    "url": youtube_result.get("youtube_url") or youtube_result.get("url"),
+                                    "raw": youtube_result,
+                                }
                         except Exception as e:
                             st.warning(f"YouTube search failed: {e}")
                         
@@ -260,7 +272,10 @@ with col2:
                         try:
                             bandcamp_result = collectors['bandcamp'].search_album(artist_name, album_name)
                             if bandcamp_result:
-                                results['bandcamp'] = bandcamp_result
+                                results['bandcamp'] = {
+                                    "url": bandcamp_result.get("bandcamp_url") or bandcamp_result.get("url"),
+                                    "raw": bandcamp_result,
+                                }
                         except Exception as e:
                             st.warning(f"Bandcamp search failed: {e}")
                         
@@ -312,8 +327,22 @@ with col2:
             st.markdown("**💿 Discogs:**")
             if discogs_data.get('url'):
                 st.markdown(f"[View on Discogs]({discogs_data['url']})")
+            elif discogs_data.get('raw', {}).get('discogs_url'):
+                st.markdown(f"[View on Discogs]({discogs_data['raw']['discogs_url']})")
             if discogs_data.get('price_info'):
                 st.write(f"Price info: {discogs_data['price_info']}")
+            if discogs_data.get('tracklist'):
+                st.markdown("**Tracklist**")
+                for track in discogs_data['tracklist']:
+                    title = track.get('title')
+                    yt_url = track.get('youtube_url')
+                    duration = track.get('duration')
+                    line = f"- {title}"
+                    if duration:
+                        line += f" ({duration})"
+                    if yt_url:
+                        line += f" — [YouTube]({yt_url})"
+                    st.markdown(line)
         
         # Spotify
         if 'spotify' in results:
@@ -324,14 +353,16 @@ with col2:
             if spotify_data.get('tracks'):
                 with st.expander("View Tracklist"):
                     for i, track in enumerate(spotify_data['tracks'][:10], 1):
-                        st.write(f"{i}. {track}")
+                        title = track.get('title') or track.get('name') or track
+                        st.write(f"{i}. {title}")
         
         # YouTube
-        if 'youtube' in results:
-            youtube_data = results['youtube']
+        if 'youtube' in results or results.get('discogs', {}).get('raw', {}).get('album_youtube_url'):
+            youtube_data = results.get('youtube', {})
             st.markdown("**📺 YouTube:**")
-            if youtube_data.get('url'):
-                st.markdown(f"[Watch on YouTube]({youtube_data['url']})")
+            url = youtube_data.get('url') or results.get('discogs', {}).get('raw', {}).get('album_youtube_url')
+            if url:
+                st.markdown(f"[Watch on YouTube]({url})")
         
         # Bandcamp
         if 'bandcamp' in results:

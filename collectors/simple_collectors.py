@@ -6,6 +6,7 @@ import io
 import logging
 import requests
 from urllib.parse import quote
+import re
 import google.generativeai as genai
 from PIL import Image
 import discogs_client
@@ -110,14 +111,14 @@ class DiscogsCollector:
         """Search for album on Discogs"""
         if not self.client:
             return None
-            
+
         try:
             query = f"{artist} {album}"
             results = self.client.search(query, type="release")
-            
+
             if results and results.count > 0:
                 release = results[0]  # Get first result
-                
+
                 data = {
                     'artist': release.artists[0].name if release.artists else artist,
                     'title': release.title,
@@ -128,29 +129,61 @@ class DiscogsCollector:
                     'catalog_number': getattr(release, 'catno', None),
                     'discogs_url': release.url if hasattr(release, 'url') else None,
                 }
-                
+
                 # Get cover image
                 if hasattr(release, 'images') and release.images:
                     data['cover_image'] = release.images[0]['uri']
-                
-                # Get detailed tracklist
+
+                # Gather YouTube videos from release metadata
+                video_entries = []
+                album_youtube_url = None
+                if hasattr(release, 'videos') and release.videos:
+                    for video in release.videos:
+                        uri = getattr(video, 'uri', None) or getattr(video, 'url', None)
+                        title = getattr(video, 'title', '')
+                        if uri and 'youtube.com' in uri:
+                            if album_youtube_url is None:
+                                album_youtube_url = uri
+                            video_entries.append({
+                                'title': title,
+                                'url': uri
+                            })
+
+                def match_video(track_title: str):
+                    if not track_title:
+                        return None
+                    normalized = track_title.lower()
+                    for video in video_entries:
+                        video_title = (video.get('title') or '').lower()
+                        if normalized in video_title or video_title in normalized:
+                            return video['url']
+                    return None
+
+                # Get detailed tracklist with YouTube URLs where available
                 if hasattr(release, 'tracklist') and release.tracklist:
                     tracks = []
                     for track in release.tracklist:
+                        youtube_url = match_video(track.title)
+                        if not youtube_url:
+                            youtube_url = YouTubeCollector().get_track_video_url(artist, track.title)
                         track_data = {
                             'title': track.title,
                             'position': getattr(track, 'position', ''),
-                            'duration': getattr(track, 'duration', '')
+                            'duration': getattr(track, 'duration', ''),
+                            'youtube_url': youtube_url,
                         }
                         tracks.append(track_data)
                     data['tracklist'] = tracks
                     data['tracklist_simple'] = [track.title for track in release.tracklist]
-                
+
+                if album_youtube_url:
+                    data['album_youtube_url'] = album_youtube_url
+
                 return data
-                
+
         except Exception as e:
             logger.error(f"Discogs error: {e}")
-        
+
         return None
 
 
@@ -263,14 +296,19 @@ class YouTubeCollector:
         
         return enhanced_tracks
     
-    def _get_track_video_url(self, artist, track_title):
-        """Get direct YouTube video URL for a specific track"""
+    def get_track_video_url(self, artist: str, track_title: str) -> str:
+        """Get a direct YouTube video URL for a specific track."""
+        query = f"{artist} {track_title}".strip()
+        if not query:
+            return ""
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
+        }
+
         try:
-            query = f"{artist} {track_title}"
-            
             if self.api_key:
-                # Use YouTube Data API to get direct video link
-                url = f"https://www.googleapis.com/youtube/v3/search"
+                url = "https://www.googleapis.com/youtube/v3/search"
                 params = {
                     'part': 'snippet',
                     'q': query,
@@ -278,22 +316,31 @@ class YouTubeCollector:
                     'maxResults': 1,
                     'key': self.api_key
                 }
-                response = requests.get(url, params=params)
+                response = requests.get(url, params=params, headers=headers, timeout=10)
                 if response.status_code == 200:
                     data = response.json()
-                    if data['items']:
-                        video_id = data['items'][0]['id']['videoId']
+                    items = data.get('items') or []
+                    if items:
+                        video_id = items[0]['id']['videoId']
                         return f"https://www.youtube.com/watch?v={video_id}"
-            
-            # Fallback to search URL if no API key or API fails
-            search_url = f"https://www.youtube.com/results?search_query={quote(query)}"
-            return search_url
-                
-        except Exception as e:
-            logger.error(f"YouTube track search error: {e}")
-            # Fallback to search URL
-            search_query = f"{artist} {track_title}"
-            return f"https://www.youtube.com/results?search_query={quote(search_query)}"
+
+            # Fallback: scrape the YouTube search page for first video id
+            response = requests.get(
+                "https://www.youtube.com/results",
+                params={'search_query': query},
+                headers=headers,
+                timeout=10
+            )
+            if response.ok:
+                match = re.search(r"watch\\?v=([A-Za-z0-9_-]{11})", response.text)
+                if match:
+                    return f"https://www.youtube.com/watch?v={match.group(1)}"
+
+        except Exception as exc:
+            logger.debug(f"YouTube track fetch error: {exc}")
+
+        # Final fallback: search URL (less ideal but avoids failure)
+        return f"https://www.youtube.com/results?search_query={quote(query)}"
 
 
 class BandcampCollector:
