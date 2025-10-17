@@ -354,7 +354,7 @@ class YouTubeCollector:
                 timeout=10
             )
             if response.ok:
-                match = re.search(r"watch\\?v=([A-Za-z0-9_-]{11})", response.text)
+                match = re.search(r"watch\?v=([A-Za-z0-9_-]{11})", response.text)
                 if match:
                     return f"https://www.youtube.com/watch?v={match.group(1)}"
 
