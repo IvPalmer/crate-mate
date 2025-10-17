@@ -98,9 +98,14 @@ if 'result' not in st.session_state:
 st.markdown('<h1 class="main-header">🎵 Crate‑Mate</h1>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666; margin-bottom: 2rem;">AI-powered album recognition and music discovery</p>', unsafe_allow_html=True)
 
+# Load secrets safely
+try:
+    STREAMLIT_SECRETS = st.secrets
+except Exception:
+    STREAMLIT_SECRETS = {}
+
 # Debug: Show environment variable status prominently
-# Optional notice if GEMINI key missing
-if not os.getenv('GEMINI_API_KEY'):
+if not (os.getenv('GEMINI_API_KEY') or STREAMLIT_SECRETS.get('GEMINI_API_KEY')):
     st.warning("⚠️ Gemini API key not found in environment. Enter it in the sidebar.")
 
 # Sidebar for API keys
@@ -109,11 +114,11 @@ with st.sidebar:
     st.markdown("Enter your API keys to enable full functionality:")
     
     # Try to get API keys from environment variables first
-    gemini_key = os.getenv('GEMINI_API_KEY') or st.text_input("🤖 Gemini API Key", type="password", help="Required for AI album identification")
-    discogs_token = os.getenv('DISCOGS_TOKEN') or st.text_input("💿 Discogs Token", type="password", help="For enhanced album data and pricing")
-    spotify_client_id = os.getenv('SPOTIFY_CLIENT_ID') or st.text_input("🎵 Spotify Client ID", type="password", help="For Spotify track links")
-    spotify_client_secret = os.getenv('SPOTIFY_CLIENT_SECRET') or st.text_input("🎵 Spotify Client Secret", type="password", help="For Spotify track links")
-    youtube_api_key = os.getenv('YOUTUBE_API_KEY') or st.text_input("📺 YouTube API Key (optional)", type="password", help="Provide to fetch direct video links")
+    gemini_key = os.getenv('GEMINI_API_KEY') or STREAMLIT_SECRETS.get('GEMINI_API_KEY') or st.text_input("🤖 Gemini API Key", type="password", help="Required for AI album identification")
+    discogs_token = os.getenv('DISCOGS_TOKEN') or STREAMLIT_SECRETS.get('DISCOGS_TOKEN') or st.text_input("💿 Discogs Token", type="password", help="For enhanced album data and pricing")
+    spotify_client_id = os.getenv('SPOTIFY_CLIENT_ID') or STREAMLIT_SECRETS.get('SPOTIFY_CLIENT_ID') or st.text_input("🎵 Spotify Client ID", type="password", help="For Spotify track links")
+    spotify_client_secret = os.getenv('SPOTIFY_CLIENT_SECRET') or STREAMLIT_SECRETS.get('SPOTIFY_CLIENT_SECRET') or st.text_input("🎵 Spotify Client Secret", type="password", help="For Spotify track links")
+    youtube_api_key = os.getenv('YOUTUBE_API_KEY') or STREAMLIT_SECRETS.get('YOUTUBE_API_KEY') or st.text_input("📺 YouTube API Key (optional)", type="password", help="Provide to fetch direct video links")
 
     # Persist keys for downstream collectors
     if gemini_key:
