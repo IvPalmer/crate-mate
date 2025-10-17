@@ -20,7 +20,18 @@ class GeminiCollector:
         if not api_key:
             raise ValueError("GEMINI_API_KEY not found")
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # Prefer the stable "latest" alias; fall back if SDK expects short name
+        preferred_models = ["models/gemini-1.5-flash-latest", "gemini-1.5-flash-latest", "models/gemini-1.5-flash"]
+        last_error = None
+        for model_name in preferred_models:
+            try:
+                self.model = genai.GenerativeModel(model_name)
+                self.model_name = model_name
+                break
+            except Exception as exc:  # pragma: no cover - defensive
+                last_error = exc
+        else:
+            raise RuntimeError(f"Unable to initialise Gemini model: {last_error}")
     
     def identify_album(self, image):
         """Identify album from image"""

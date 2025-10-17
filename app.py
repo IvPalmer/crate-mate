@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 import io
-import asyncio
 from PIL import Image, ImageOps
 import hashlib
 from typing import Dict, List, Optional
@@ -76,13 +75,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Import collectors
+# Import collectors (self-contained versions)
 try:
-    from gemini import GeminiCollector
-    from discogs import DiscogsCollector
-    from spotify import SpotifyCollector
-    from youtube import YouTubeCollector
-    from bandcamp import BandcampCollector
+    from simple_collectors import (
+        GeminiCollector,
+        DiscogsCollector,
+        SpotifyCollector,
+        YouTubeCollector,
+        BandcampCollector,
+    )
 except ImportError as e:
     st.error(f"Error importing collectors: {e}")
     st.stop()
@@ -98,10 +99,9 @@ st.markdown('<h1 class="main-header">🎵 Crate‑Mate</h1>', unsafe_allow_html=
 st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666; margin-bottom: 2rem;">AI-powered album recognition and music discovery</p>', unsafe_allow_html=True)
 
 # Debug: Show environment variable status prominently
-if os.getenv('GEMINI_API_KEY'):
-    st.success(f"🔧 DEBUG: Environment variables loaded! GEMINI_API_KEY length: {len(os.getenv('GEMINI_API_KEY'))}")
-else:
-    st.error("🔧 DEBUG: Environment variables NOT loaded!")
+# Optional notice if GEMINI key missing
+if not os.getenv('GEMINI_API_KEY'):
+    st.warning("⚠️ Gemini API key not found in environment. Enter it in the sidebar.")
 
 # Sidebar for API keys
 with st.sidebar:
@@ -113,6 +113,19 @@ with st.sidebar:
     discogs_token = os.getenv('DISCOGS_TOKEN') or st.text_input("💿 Discogs Token", type="password", help="For enhanced album data and pricing")
     spotify_client_id = os.getenv('SPOTIFY_CLIENT_ID') or st.text_input("🎵 Spotify Client ID", type="password", help="For Spotify track links")
     spotify_client_secret = os.getenv('SPOTIFY_CLIENT_SECRET') or st.text_input("🎵 Spotify Client Secret", type="password", help="For Spotify track links")
+    youtube_api_key = os.getenv('YOUTUBE_API_KEY') or st.text_input("📺 YouTube API Key (optional)", type="password", help="Provide to fetch direct video links")
+
+    # Persist keys for downstream collectors
+    if gemini_key:
+        os.environ['GEMINI_API_KEY'] = gemini_key
+    if discogs_token:
+        os.environ['DISCOGS_TOKEN'] = discogs_token
+    if spotify_client_id:
+        os.environ['SPOTIFY_CLIENT_ID'] = spotify_client_id
+    if spotify_client_secret:
+        os.environ['SPOTIFY_CLIENT_SECRET'] = spotify_client_secret
+    if youtube_api_key:
+        os.environ['YOUTUBE_API_KEY'] = youtube_api_key
     
     st.markdown("---")
     
@@ -137,7 +150,10 @@ with st.sidebar:
         services_status.append("❌ Spotify")
     
     # YouTube and Bandcamp don't need API keys
-    services_status.append("✅ YouTube")
+    if youtube_api_key:
+        services_status.append("✅ YouTube (env)")
+    else:
+        services_status.append("✅ YouTube")
     services_status.append("✅ Bandcamp")
     
     st.markdown("### 📊 Status")
@@ -154,31 +170,38 @@ with col1:
         type=['png', 'jpg', 'jpeg'],
         help="Upload a clear image of an album cover for AI recognition"
     )
-    
+
+    # Process button maintains state & uploaded bytes
     if uploaded_file is not None:
-        # Display uploaded image
         image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Album Cover", use_column_width=True)
-        
-        # Process button
+        st.image(image, caption="Uploaded Album Cover", width="stretch")
         if st.button("🔍 Identify Album", disabled=st.session_state.processing):
             if not gemini_key:
                 st.error("❌ Gemini API key is required for album identification!")
             else:
                 st.session_state.processing = True
+                st.session_state.uploaded_bytes = uploaded_file.getvalue()
+                st.session_state.uploaded_name = uploaded_file.name
                 st.rerun()
+
+if st.session_state.processing:
+    uploaded_data = st.session_state.get('uploaded_bytes')
+    uploaded_name = st.session_state.get('uploaded_name', 'upload.jpg')
+else:
+    uploaded_data = None
+    uploaded_name = None
 
 with col2:
     st.markdown("### 🎯 Results")
     
-    if st.session_state.processing and uploaded_file is not None:
+    if st.session_state.processing and uploaded_data is not None:
         with st.spinner("🤖 Analyzing album cover with AI..."):
             try:
                 # Initialize collectors
                 collectors = {}
                 
                 if gemini_key:
-                    collectors['gemini'] = GeminiVisionCollector(gemini_key)
+                    collectors['gemini'] = GeminiCollector()
                 
                 if discogs_token:
                     collectors['discogs'] = DiscogsCollector(discogs_token)
@@ -191,10 +214,11 @@ with col2:
                 
                 # Process image with Gemini
                 if 'gemini' in collectors:
-                    image_bytes = uploaded_file.getvalue()
+                    from io import BytesIO
+                    image = Image.open(BytesIO(uploaded_data))
                     
                     # Get AI identification
-                    gemini_result = asyncio.run(collectors['gemini'].identify_album(image_bytes))
+                    gemini_result = collectors['gemini'].identify_album(image)
                     
                     if gemini_result and gemini_result.get('album') and gemini_result.get('artist'):
                         album_name = gemini_result['album']
@@ -209,7 +233,7 @@ with col2:
                         # Search Discogs
                         if 'discogs' in collectors:
                             try:
-                                discogs_result = asyncio.run(collectors['discogs'].search_album(artist_name, album_name))
+                                discogs_result = collectors['discogs'].search_album(artist_name, album_name)
                                 if discogs_result:
                                     results['discogs'] = discogs_result
                             except Exception as e:
@@ -218,7 +242,7 @@ with col2:
                         # Search Spotify
                         if 'spotify' in collectors:
                             try:
-                                spotify_result = asyncio.run(collectors['spotify'].search_album(artist_name, album_name))
+                                spotify_result = collectors['spotify'].search_album(artist_name, album_name)
                                 if spotify_result:
                                     results['spotify'] = spotify_result
                             except Exception as e:
@@ -226,7 +250,7 @@ with col2:
                         
                         # Search YouTube
                         try:
-                            youtube_result = asyncio.run(collectors['youtube'].search_album(artist_name, album_name))
+                            youtube_result = collectors['youtube'].search_album(artist_name, album_name)
                             if youtube_result:
                                 results['youtube'] = youtube_result
                         except Exception as e:
@@ -234,7 +258,7 @@ with col2:
                         
                         # Search Bandcamp
                         try:
-                            bandcamp_result = asyncio.run(collectors['bandcamp'].search_album(artist_name, album_name))
+                            bandcamp_result = collectors['bandcamp'].search_album(artist_name, album_name)
                             if bandcamp_result:
                                 results['bandcamp'] = bandcamp_result
                         except Exception as e:
