@@ -1,0 +1,24 @@
+__pycache__
+*.pyc
+.env
+.env.*
+.cache
+.streamlit/secrets.toml
+.git
+node_modules
+frontend/node_modules
+frontend/build
+backend/__pycache__
+backend/.pytest_cache
+debugging_imgs
+database/sample_data/images
+hf-spaces-crate-mate
+landing-temp
+docs
+*.log
+.DS_Store
+# GCP keys — stored on VPS host, never in image
+neural-quarter-*.json
+*credentials*.json
+*service-account*.json
+gcp-credentials.json

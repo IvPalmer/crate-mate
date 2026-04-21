@@ -1,0 +1,75 @@
+# Crate-Mate production compose — Dokploy-network + Traefik.
+# Backend FastAPI is NOT exposed externally; frontend nginx proxies /api/ to it.
+# GCP service account JSON must be at /etc/lake/crate-mate-gcp.json on the VPS
+# (chmod 600 ubuntu:ubuntu). Bind-mounted read-only into backend.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DISCOGS_TOKEN: ${DISCOGS_TOKEN}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp.json
+      NUMBA_DEBUG: "0"
+      PORT: "8000"
+    volumes:
+      - /etc/lake/crate-mate-gcp.json:/secrets/gcp.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/docs\", timeout=3)' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        REACT_APP_API_BASE_URL: /api
+    restart: unless-stopped
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.crate-mate-web.rule=Host(`crate-mate.grooveops.dev`)
+      - traefik.http.routers.crate-mate-web.entrypoints=websecure
+      - traefik.http.routers.crate-mate-web.tls.certresolver=letsencrypt
+      - traefik.http.services.crate-mate-web.loadbalancer.server.port=80
+    networks:
+      - dokploy-network
+      - internal
+
+networks:
+  dokploy-network:
+    external: true
+  internal:
+    driver: bridge
